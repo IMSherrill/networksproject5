@@ -9,11 +9,16 @@ import random
 from datetime import datetime
 
 class LogEntry:
-        def __init__(self, command, key, value, term):
-                self.command = command
-                self.key = key
-                self.value = value
-                self.term = term
+        # def __init__(self, command, key, value, term):
+        #         self.command = command
+        #         self.key = key
+        #         self.value = value
+        #         self.term = term
+
+
+        def __init__(self, initial_data):
+                for key in initial_data:
+                    setattr(self, key, initial_data[key])
 
 
         def __repr__(self):
@@ -22,6 +27,14 @@ class LogEntry:
 
                 if self.command == 'get':
                         return "{}     client <- {}".format(self.term, self.key)
+
+        def toDict(self):
+                return {
+                                'command' : self.command,
+                                'key' : self.key,
+                                'value' : self.value,
+                                'term' : self.term
+                        }
 
 
 def send(msg):
@@ -74,6 +87,7 @@ while True:
         if state == 'leader':
                 now = time.time()
                 if now - keepaliveclock > .5:
+                        # TODO: keepalive might not be neccesary when i have implemented append entries RPC, if its empty it will function the same?
                         keepalive_msg = {
                                                 'src' : my_id,
                                              'leader' : leader,
@@ -140,64 +154,72 @@ while True:
                         if state == 'leader': 
 
                                 if msg['type'] == 'get':
-                                        key = msg['key']
+                                                key = msg['key']
+                                                value = msg.get('value', False)
 
-                                        entry = LogEntry(       command= 'get',
-                                                                    key= key,
-                                                                  value= False,
-                                                                   term= currentterm
+                                                entry = LogEntry({       
+                                                                        'command' : 'get',
+                                                                            'key' : key,
+                                                                          'value' : value,
+                                                                           'term' : currentterm
 
-                                                        )
-                                        transactionlog.append(entry)
+                                                                })
+                                                transactionlog.append(entry)
+
+                                                appendentry_msg = {
+                                                                        'src' : my_id,
+                                                                        'dst' : 'FFFF',
+                                                                     'leader' : leader,
+                                                                       'type' : 'append-entries',
+                                                                    'entries' : [entry.toDict()],
+                                                                      'term'  : currentterm,
+                                                                      # TODO: prevlogindex, prevlogterm, leaderCommit
+                                                               'prevLogIndex' : '',
+                                                                'prevLogTerm' : 0,
+                                                               'leaderCommit' : ''
+                                                                  }
+                                                send(appendentry_msg)
 
 
-                                        value = statemachine.get(key)
-                                        
+                                                value = statemachine.get(key)
+                                                
+                                                #TODO: only do this if its actually correct
+                                                response_msg = {
+                                                                        "src": my_id, 
+                                                                        "dst": msg['src'], 
+                                                                     "leader": leader,
+                                                                       "type": "ok", 
+                                                                        "MID": msg['MID'], 
+                                                                      "value": value
+                                                                }
+                                                send(response_msg)
 
-                                        response_msg = {
-                                                                "src": my_id, 
-                                                                "dst": msg['src'], 
-                                                             "leader": leader,
-                                                               "type": "ok", 
-                                                                "MID": msg['MID'], 
-                                                              "value": value
-                                                        }
-                                        send(response_msg)
+
+
 
                                 if msg['type'] == 'put':
-                                        key = msg['key']
-                                        value = msg['value']
+                                                key = msg['key']
+                                                value = msg['value']
 
-                                        statemachine[key] = value
+                                                statemachine[key] = value
 
-                                        entry = LogEntry(       command= 'put',
-                                                                    key= key,
-                                                                  value= value,
-                                                                   term= currentterm
-                                                        )
-                                        transactionlog.append(entry)
+                                                entry = LogEntry({      
+                                                                        'command' : 'put',
+                                                                            'key' : key,
+                                                                          'value' : value,
+                                                                           'term' : currentterm
+                                                                })
+                                                transactionlog.append(entry)
 
-
-                                        response_msg = {
-                                                                "src": my_id, 
-                                                                "dst": msg['src'], 
-                                                             "leader": leader,
-                                                               "type": "ok", 
-                                                                "MID": msg['MID'], 
-                                                        }
-                                        send(response_msg)
-
-
-
-
-                                # response_msg = {
-                                #                         'src' : my_id,
-                                #                         'dst' : msg['src'],
-                                #                         'leader' : leader,
-                                #                         'type' : 'fail',
-                                #                         'MID' : msg['MID']
-                                #                 }
-                                # send(response_msg)
+                                                #TODO: only do this if its actually correct
+                                                response_msg = {
+                                                                        "src": my_id, 
+                                                                        "dst": msg['src'], 
+                                                                     "leader": leader,
+                                                                       "type": "ok", 
+                                                                        "MID": msg['MID'], 
+                                                                }
+                                                send(response_msg)
 
 
                         else: # redirect client to the leader
@@ -276,6 +298,13 @@ while True:
                         # check if the term is as expected?
                         state = 'follower'
                         leader = msg['leader']
+
+
+                if msg['type'] == 'append-entries':
+                        for newEntry in msg['entries']:
+                                entry = LogEntry(newEntry)
+                                transactionlog.append(newEntry)
+                                print "{} {}".format(my_id, newEntry)
 
 
 
