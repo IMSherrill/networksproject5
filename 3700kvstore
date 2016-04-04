@@ -11,28 +11,14 @@ from datetime import datetime
 def send(msg):
 	sock.send(json.dumps(msg))
 
-def requestVote():
-	pass
-
-def checkVoteWinnerForTerm(electionterm):
-        numvotes = 0
-        candidateleaderid = ''
-
-        for candidate, supporters in votes[electionterm].iteritems():
-                if len(supporters) > numvotes:
-                        numvotes = len(supporters)
-                        candidateleaderid = candidate
-
-        return (candidateleaderid, numvotes)
-
 
 my_id = sys.argv[1]
 replica_ids = sys.argv[2:]
 all_ids = [my_id] + replica_ids
 
-state = 'follower'
-term = 0
-votes = {}
+state = 'candidate'
+currentterm = 0
+votedForMe = []
 myvotes = {}
 
 # Connect to the network. All messages to/from other replicas and clients will
@@ -43,15 +29,70 @@ sock.connect(my_id)
 last = 0
 
 leader = 'FFFF'
-readytovote = True
-
 
 hearFromLeader = time.time()
+
+readytovote = False
+electionclock = time.time()
+timeoutlength = random.uniform(.150, .300)
 
 
 while True:
         ready = select.select([sock], [], [], 0.1)[0]
 
+        now = time.time()
+        if state == 'candidate' and now - electionclock > timeoutlength:
+                print 'election timeout'
+                readytovote = True
+
+
+        now = time.time()
+        if now - hearFromLeader > 10 and not state == 'leader':
+                readytovote = True
+
+
+        if readytovote:
+                currentterm += 1
+                electionclock = time.time()
+                timeoutlength = random.uniform(.150, .300)
+
+                state = 'candidate'
+                election_msg = {
+                                        'src': my_id,
+                                        'leader': 'FFFF',
+                                        'dst': 'FFFF',
+                                        'type': 'requestvote',
+                                        'term': currentterm,
+                                }
+                send(election_msg)
+
+                hearFromLeader = time.time()
+
+                vote_msg = {
+                                                'leader' : leader,
+                                                'type'   : 'vote',
+                                                'vote'   : my_id,
+                                                'term'   : currentterm,
+                                                'dst'    : 'FFFF',
+                                                'src'    : my_id
+                                           }
+                send(vote_msg)
+
+                votedForMe = [my_id]
+                myvotes[currentterm] = my_id
+                print '{} voted for itself in term {}'.format(my_id, currentterm)
+
+                readytovote = False
+
+
+
+
+
+
+
+        #######################
+        #  RECIEVING MESSAGE  #
+        #######################
         if sock in ready:
                 msg_raw = sock.recv(32768)
 
@@ -60,40 +101,12 @@ while True:
 
 
                 if msg['src'] == leader:
-                        print msg
                         hearFromLeader = time.time()
-
-
-
-                now = time.time()
-
-                if now - hearFromLeader > 3 and not state == 'leader':
-                        print '{} WHERES THE LEADER?'.format(my_id)
-                        readytovote = True
-
-
-                if readytovote:
-                        # TODO: make this voting shit work as a function:
-                        term += 1
-                        state = 'candidate'
-                        print '{} wants to vote'.format(my_id)
-                        # TODO: should Implement vote for myself here? most likely
-                        election_msg = {
-                                                'src': my_id,
-                                                'leader': 'FFFF',
-                                                'dst': 'FFFF',
-                                                'type': 'requestvote',
-                                                'term': term,
-                                        }
-                        send(election_msg)
-
-                        readytovote = False
-
 
 
                 if msg['type'] in ['get', 'put']:
 
-                        if state == 'leader': #broadcast to everyone get them to implement
+                        if state == 'leader': 
 
                                 # print 'I am the leader MID: {}  wants me to {}'.format(msg['MID'], msg['type'])
 
@@ -108,7 +121,6 @@ while True:
 
 
                         else: # redirect client to the leader
-                                print 'redirecting from {}'.format(msg['src'])
                                 response_msg = {
                                                         'src' : my_id,
                                                         'dst' : msg['src'],
@@ -122,63 +134,72 @@ while True:
 
 
                 if msg['type'] == 'requestvote':
-                    	# votes are first come first serve
 
-                        if not myvotes.get(term):
+                        currentterm = msg['term']
+
+                        if not myvotes.get(currentterm):
+                                print 'im about to vote'
         	            	candidate = msg['src']
-                                term = msg['term']
-                                myvotes[term] = candidate
-                                votes[term] = {}
-                                votes[term][candidate] = [my_id]
                                 vote_msg = {
                                                 'leader' : leader,
                                                 'type'   : 'vote',
                                                 'vote'   : candidate,
-                                                'term'   : term,
+                                                'term'   : currentterm,
                                                 'dst'    : 'FFFF',
                                                 'src'    : my_id
                                            }
+                                print "{} is voting for {} in term {}".format(my_id, candidate, currentterm)
                                 send(vote_msg)
+                                myvotes[currentterm] = candidate
+
                         else: # I already voted this term
                                 pass
+
+
 
                 if msg['type'] == 'vote':
                         candidate = msg['vote']
                         electionterm = msg['term']
-                        if not votes.get(electionterm):
-                                votes[term] = {}
-                        if not votes[term].get(candidate):
-                                votes[term][candidate] = []
 
-                        votes[term][candidate].append(msg['src'])
+                        if candidate == my_id:
+                                if electionterm > currentterm:
+                                        currentterm = electionterm
+                                        votedForMe = [msg['src']]
 
-                        (currentVoteWinner, numvotes) = checkVoteWinnerForTerm(electionterm=electionterm)
-                        if numvotes > len(all_ids) / 2:
-                                leader = currentVoteWinner
-                                print '{} is the leader'.format(my_id)
-                                # once we found a leader do we need to continue election process? idk probably not can help w latency
-                                if leader == my_id:
-                                        state = 'leader'
-                                        print '{} I AM YOUR LEADER BOW TO ME'.format(my_id)
-                                        broadcast_msg = {
-                                                                'leader' : leader,
-                                                                'type'   : 'new-leader',
-                                                                'src'    : my_id,
-                                                                'dst'    : 'FFFF',
-                                                                'term'   : term
-                                                        }
+                                elif electionterm == currentterm:
+                                        if not msg['src'] in votedForMe:
+                                                votedForMe.append(msg['src'])
 
-                                        send(broadcast_msg)
-                        else:
-                                print "{} hasnt found a majoirty leader yet".format(my_id)
+                                                print "{} {}    {}".format(my_id, currentterm, votedForMe) 
+
+                                                if len(votedForMe) > len(all_ids) / 2:
+                                                        leader = my_id
+                                                        print '{} is the leader'.format(my_id)
+                                                        state = 'leader'
+                                                        broadcast_msg = {
+                                                                                'leader' : my_id,
+                                                                                'type'   : 'new-leader',
+                                                                                'src'    : my_id,
+                                                                                'dst'    : 'FFFF',
+                                                                                'term'   : currentterm
+                                                                        }
+
+                                                        send(broadcast_msg)
+
+                                else:
+                                        pass
+                                        #return false, voting for a previous term cannot go back in time
+
+                                
+
 
 
                 if msg['type'] == 'new-leader':
                         # check if the term is as expected?
                         state = 'follower'
                         leader = msg['leader']
-
-
+                        print '{} is my new leader'.format(leader)
+                        
 
 
 
@@ -191,9 +212,8 @@ while True:
 
 
         clock = time.time()
-        if clock-last > 2:
-                print "{} is in state {}, thinks {} is leader".format(my_id, state, leader)
-                print state
+        if clock - last > 2:
+                print "{} is in state {}, thinks {} is leader of term {}".format(my_id, state, leader, currentterm)
                 last = clock
 
 
