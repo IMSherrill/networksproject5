@@ -295,19 +295,6 @@ while True:
                         transactionlog.append(entry)
 
 
-                        entryisinlog_msg = {
-                                                'leader' : leader,
-                                                'src' : my_id,
-                                                'dst' : leader,
-                                                'type' : 'ready-to-commit',
-                                                'entry' : newEntry
-                                           }
-
-                        send(entryisinlog_msg)
-
-                if msg['type'] == 'ready-to-commit':
-
-
 
 
 
