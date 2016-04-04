@@ -78,6 +78,7 @@ keepaliveclock = time.time()
 
 transactionlog = []
 statemachine = {}
+
  
 
 while True:
@@ -190,10 +191,10 @@ while True:
 
 
                                 # TODO: this is temporary until i make replicas commit
-                                if msg['type'] == 'put':
-                                        entry.commit()
+                                # if msg['type'] == 'put':
+                                #         entry.commit()
 
-                                value = statemachine.get(key, False)
+                                value = statemachine.get(key, '')
                                 
                                 #TODO: only do this if its actually correct
                                 response_msg = {
@@ -231,6 +232,9 @@ while True:
                                                 'type'   : 'vote',
                                                 'vote'   : candidate,
                                                 'term'   : currentterm,
+                                                # the dst can probably just be the candidate
+                                                # give this a try when its done
+                                                # 'dst' : candidate,
                                                 'dst'    : 'FFFF',
                                                 'src'    : my_id
                                            }
@@ -285,9 +289,25 @@ while True:
 
 
                 if msg['type'] == 'append-entries':
-                        for newEntry in msg['entries']:
-                                entry = LogEntry(newEntry)
-                                transactionlog.append(entry)
+
+                        newEntry = msg['entries'][0]
+                        entry = LogEntry(newEntry)
+                        transactionlog.append(entry)
+
+
+                        entryisinlog_msg = {
+                                                'leader' : leader,
+                                                'src' : my_id,
+                                                'dst' : leader,
+                                                'type' : 'ready-to-commit',
+                                                'entry' : newEntry
+                                           }
+
+                        send(entryisinlog_msg)
+
+                if msg['type'] == 'ready-to-commit':
+
+
 
 
 
