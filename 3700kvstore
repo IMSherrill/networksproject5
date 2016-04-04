@@ -8,6 +8,22 @@ import json
 import random
 from datetime import datetime
 
+class LogEntry:
+        def __init__(self, command, key, value, term):
+                self.command = command
+                self.key = key
+                self.value = value
+                self.term = term
+
+
+        def __repr__(self):
+                if self.command == 'put':
+                        return "{}    {} -> {}".format(self.term, self.key, self.value)
+
+                if self.command == 'get':
+                        return "{}     client <- {}".format(self.term, self.key)
+
+
 def send(msg):
 	sock.send(json.dumps(msg))
 
@@ -37,6 +53,9 @@ electionclock = time.time()
 timeoutlength = random.uniform(.150, .300)
 
 keepaliveclock = time.time()
+
+transactionlog = []
+statemachine = {}
  
 
 while True:
@@ -48,7 +67,7 @@ while True:
 
 
         now = time.time()
-        if now - hearFromLeader > 4 and not state == 'leader':
+        if now - hearFromLeader > 2 and not state == 'leader':
                 readytovote = True
 
 
@@ -120,16 +139,65 @@ while True:
 
                         if state == 'leader': 
 
-                                # print 'I am the leader MID: {}  wants me to {}'.format(msg['MID'], msg['type'])
+                                if msg['type'] == 'get':
+                                        key = msg['key']
 
-                                response_msg = {
-                                                        'src' : my_id,
-                                                        'dst' : msg['src'],
-                                                        'leader' : leader,
-                                                        'type' : 'fail',
-                                                        'MID' : msg['MID']
-                                                }
-                                send(response_msg)
+                                        entry = LogEntry(       command= 'get',
+                                                                    key= key,
+                                                                  value= False,
+                                                                   term= currentterm
+
+                                                        )
+                                        transactionlog.append(entry)
+
+
+                                        value = statemachine.get(key)
+                                        
+
+                                        response_msg = {
+                                                                "src": my_id, 
+                                                                "dst": msg['src'], 
+                                                             "leader": leader,
+                                                               "type": "ok", 
+                                                                "MID": msg['MID'], 
+                                                              "value": value
+                                                        }
+                                        send(response_msg)
+
+                                if msg['type'] == 'put':
+                                        key = msg['key']
+                                        value = msg['value']
+
+                                        statemachine[key] = value
+
+                                        entry = LogEntry(       command= 'put',
+                                                                    key= key,
+                                                                  value= value,
+                                                                   term= currentterm
+                                                        )
+                                        transactionlog.append(entry)
+
+
+                                        response_msg = {
+                                                                "src": my_id, 
+                                                                "dst": msg['src'], 
+                                                             "leader": leader,
+                                                               "type": "ok", 
+                                                                "MID": msg['MID'], 
+                                                        }
+                                        send(response_msg)
+
+
+
+
+                                # response_msg = {
+                                #                         'src' : my_id,
+                                #                         'dst' : msg['src'],
+                                #                         'leader' : leader,
+                                #                         'type' : 'fail',
+                                #                         'MID' : msg['MID']
+                                #                 }
+                                # send(response_msg)
 
 
                         else: # redirect client to the leader
@@ -232,12 +300,13 @@ while True:
 
 
 
+
 #1  Add basic support for responding to client get() and put() requests. At this point, you can respond to all requests with a "type": "fail" message.
 #2  Implement the Raft election protocol (section 5.2 of the Raft paper); add the ability to respond to get() and put() requests with "type": "redirect" messages.
 #3  Add a timeout to detect leader failures (i.e. if you don't hear from the leader in X milliseconds...) and make sure that the new election proceeds correctly.
-
 #4  Implement a basic, empty version of the AppendEntries RPC call that doesn't replicate any data, but acts as a keepalive message from the leader to other replicas to prevent unnecessary elections.
 #5  Implement the transaction log and the "state machine" (i.e. a dictionary containing the key/value pairs from clients, Section 5.3). Don't bother replicating the transactions, just ensure that the leader is able to correctly answer get() and put() requests.
+
 #6  Improve your AppendEntries RPC call to actually send data to replicas. Ensure that updates are only committing when a quorum is in agreement.
 #7  Add support for retrying failed commits and test it by experimenting with lossy network simulations.
 #8  If you haven't already, modify the leader election to support the additional restrictions in Section 5.4.1; test your implementation on lossy networks with failed leaders.
