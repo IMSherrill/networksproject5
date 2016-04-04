@@ -130,7 +130,7 @@ while True:
                                                 'term'   : currentterm,
                                                 'dst'    : 'FFFF',
                                                 'src'    : my_id
-                                           }
+                           }
                 send(vote_msg)
 
                 votedForMe = [my_id]
@@ -255,8 +255,6 @@ while True:
                                         if not msg['src'] in votedForMe:
                                                 votedForMe.append(msg['src'])
 
-                                                print "{} {}    {}".format(my_id, currentterm, votedForMe) 
-
                                                 if len(votedForMe) > len(all_ids) / 2:
                                                         leader = my_id
                                                         print '{} is the leader'.format(my_id)
@@ -278,7 +276,6 @@ while True:
                                 
 
 
-
                 if msg['type'] == 'new-leader':
                         # check if the term is as expected?
                         state = 'follower'
@@ -290,8 +287,7 @@ while True:
                 if msg['type'] == 'append-entries':
                         for newEntry in msg['entries']:
                                 entry = LogEntry(newEntry)
-                                transactionlog.append(newEntry)
-                                print "{} {}".format(my_id, newEntry)
+                                transactionlog.append(entry)
 
 
 
@@ -324,6 +320,7 @@ while True:
 #5  Implement the transaction log and the "state machine" (i.e. a dictionary containing the key/value pairs from clients, Section 5.3). Don't bother replicating the transactions, just ensure that the leader is able to correctly answer get() and put() requests.
 
 #6  Improve your AppendEntries RPC call to actually send data to replicas. Ensure that updates are only committing when a quorum is in agreement.
+
 #7  Add support for retrying failed commits and test it by experimenting with lossy network simulations.
 #8  If you haven't already, modify the leader election to support the additional restrictions in Section 5.4.1; test your implementation on lossy networks with failed leaders.
 #9  Implement the subtle commit restriction given in Section 5.4.2.
