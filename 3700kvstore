@@ -36,6 +36,15 @@ class LogEntry:
                                 'term' : self.term
                         }
 
+        # TODO: why isnt this working?
+        def commit(self):
+                if self.command == 'put':
+                        statemachine[self.key] = self.value
+                        value = self.value
+
+
+
+
 
 def send(msg):
 	sock.send(json.dumps(msg))
@@ -157,7 +166,7 @@ while True:
                                 value = msg.get('value', False)
 
                                 entry = LogEntry({       
-                                                        'command' : 'get',
+                                                        'command' : msg['type'],
                                                             'key' : key,
                                                           'value' : value,
                                                            'term' : currentterm
@@ -182,7 +191,7 @@ while True:
 
                                 # TODO: this is temporary until i make replicas commit
                                 if msg['type'] == 'put':
-                                        statemachine[key] = value
+                                        entry.commit()
 
                                 value = statemachine.get(key, False)
                                 
@@ -199,14 +208,14 @@ while True:
 
 
                         else: # redirect client to the leader
-                                response_msg = {
+                                redirect_msg = {
                                                         'src' : my_id,
                                                         'dst' : msg['src'],
                                                         'leader' : leader,
                                                         'type' : 'redirect',
                                                         'MID' : msg['MID']
                                                 }
-                                send(response_msg)
+                                send(redirect_msg)
 
 
 
@@ -274,6 +283,8 @@ while True:
                         # check if the term is as expected?
                         state = 'follower'
                         leader = msg['leader']
+
+
 
 
                 if msg['type'] == 'append-entries':
