@@ -153,73 +153,49 @@ while True:
 
                         if state == 'leader': 
 
-                                if msg['type'] == 'get':
-                                                key = msg['key']
-                                                value = msg.get('value', False)
+                                key = msg['key']
+                                value = msg.get('value', False)
 
-                                                entry = LogEntry({       
-                                                                        'command' : 'get',
-                                                                            'key' : key,
-                                                                          'value' : value,
-                                                                           'term' : currentterm
+                                entry = LogEntry({       
+                                                        'command' : 'get',
+                                                            'key' : key,
+                                                          'value' : value,
+                                                           'term' : currentterm
 
-                                                                })
-                                                transactionlog.append(entry)
+                                                })
+                                transactionlog.append(entry)
 
-                                                appendentry_msg = {
-                                                                        'src' : my_id,
-                                                                        'dst' : 'FFFF',
-                                                                     'leader' : leader,
-                                                                       'type' : 'append-entries',
-                                                                    'entries' : [entry.toDict()],
-                                                                      'term'  : currentterm,
-                                                                      # TODO: prevlogindex, prevlogterm, leaderCommit
-                                                               'prevLogIndex' : '',
-                                                                'prevLogTerm' : 0,
-                                                               'leaderCommit' : ''
-                                                                  }
-                                                send(appendentry_msg)
-
-
-                                                value = statemachine.get(key)
-                                                
-                                                #TODO: only do this if its actually correct
-                                                response_msg = {
-                                                                        "src": my_id, 
-                                                                        "dst": msg['src'], 
-                                                                     "leader": leader,
-                                                                       "type": "ok", 
-                                                                        "MID": msg['MID'], 
-                                                                      "value": value
-                                                                }
-                                                send(response_msg)
+                                appendentry_msg = {
+                                                        'src' : my_id,
+                                                        'dst' : 'FFFF',
+                                                     'leader' : leader,
+                                                       'type' : 'append-entries',
+                                                    'entries' : [entry.toDict()],
+                                                      'term'  : currentterm,
+                                                      # TODO: prevlogindex, prevlogterm, leaderCommit
+                                               'prevLogIndex' : '',
+                                                'prevLogTerm' : 0,
+                                               'leaderCommit' : ''
+                                                  }
+                                send(appendentry_msg)
 
 
-
-
+                                # TODO: this is temporary until i make replicas commit
                                 if msg['type'] == 'put':
-                                                key = msg['key']
-                                                value = msg['value']
+                                        statemachine[key] = value
 
-                                                statemachine[key] = value
-
-                                                entry = LogEntry({      
-                                                                        'command' : 'put',
-                                                                            'key' : key,
-                                                                          'value' : value,
-                                                                           'term' : currentterm
-                                                                })
-                                                transactionlog.append(entry)
-
-                                                #TODO: only do this if its actually correct
-                                                response_msg = {
-                                                                        "src": my_id, 
-                                                                        "dst": msg['src'], 
-                                                                     "leader": leader,
-                                                                       "type": "ok", 
-                                                                        "MID": msg['MID'], 
-                                                                }
-                                                send(response_msg)
+                                value = statemachine.get(key, False)
+                                
+                                #TODO: only do this if its actually correct
+                                response_msg = {
+                                                        "src": my_id, 
+                                                        "dst": msg['src'], 
+                                                     "leader": leader,
+                                                       "type": "ok", 
+                                                        "MID": msg['MID'], 
+                                                      "value": value
+                                                }
+                                send(response_msg)
 
 
                         else: # redirect client to the leader
