@@ -36,20 +36,33 @@ readytovote = False
 electionclock = time.time()
 timeoutlength = random.uniform(.150, .300)
 
+keepaliveclock = time.time()
+ 
 
 while True:
         ready = select.select([sock], [], [], 0.1)[0]
 
         now = time.time()
         if state == 'candidate' and now - electionclock > timeoutlength:
-                print 'election timeout'
                 readytovote = True
 
 
         now = time.time()
-        if now - hearFromLeader > 10 and not state == 'leader':
+        if now - hearFromLeader > 4 and not state == 'leader':
                 readytovote = True
 
+
+        if state == 'leader':
+                now = time.time()
+                if now - keepaliveclock > .5:
+                        keepalive_msg = {
+                                                'src' : my_id,
+                                             'leader' : leader,
+                                                'dst' : 'FFFF',
+                                               'type' : 'keepalive',
+                                        }
+                        send(keepalive_msg)
+                        keepaliveclock = time.time()
 
         if readytovote:
                 currentterm += 1
@@ -80,7 +93,6 @@ while True:
 
                 votedForMe = [my_id]
                 myvotes[currentterm] = my_id
-                print '{} voted for itself in term {}'.format(my_id, currentterm)
 
                 readytovote = False
 
@@ -138,7 +150,6 @@ while True:
                         currentterm = msg['term']
 
                         if not myvotes.get(currentterm):
-                                print 'im about to vote'
         	            	candidate = msg['src']
                                 vote_msg = {
                                                 'leader' : leader,
@@ -148,7 +159,6 @@ while True:
                                                 'dst'    : 'FFFF',
                                                 'src'    : my_id
                                            }
-                                print "{} is voting for {} in term {}".format(my_id, candidate, currentterm)
                                 send(vote_msg)
                                 myvotes[currentterm] = candidate
 
@@ -198,7 +208,9 @@ while True:
                         # check if the term is as expected?
                         state = 'follower'
                         leader = msg['leader']
-                        print '{} is my new leader'.format(leader)
+
+
+
                         
 
 
@@ -212,7 +224,7 @@ while True:
 
 
         clock = time.time()
-        if clock - last > 2:
+        if clock - last > 4:
                 print "{} is in state {}, thinks {} is leader of term {}".format(my_id, state, leader, currentterm)
                 last = clock
 
@@ -222,8 +234,8 @@ while True:
 
 #1  Add basic support for responding to client get() and put() requests. At this point, you can respond to all requests with a "type": "fail" message.
 #2  Implement the Raft election protocol (section 5.2 of the Raft paper); add the ability to respond to get() and put() requests with "type": "redirect" messages.
-
 #3  Add a timeout to detect leader failures (i.e. if you don't hear from the leader in X milliseconds...) and make sure that the new election proceeds correctly.
+
 #4  Implement a basic, empty version of the AppendEntries RPC call that doesn't replicate any data, but acts as a keepalive message from the leader to other replicas to prevent unnecessary elections.
 #5  Implement the transaction log and the "state machine" (i.e. a dictionary containing the key/value pairs from clients, Section 5.3). Don't bother replicating the transactions, just ensure that the leader is able to correctly answer get() and put() requests.
 #6  Improve your AppendEntries RPC call to actually send data to replicas. Ensure that updates are only committing when a quorum is in agreement.
