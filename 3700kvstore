@@ -1,0 +1,228 @@
+#!/usr/bin/env python
+
+import sys
+import socket
+import select
+import time
+import json
+import random
+from datetime import datetime
+
+def send(msg):
+	sock.send(json.dumps(msg))
+
+def requestVote():
+	pass
+
+def checkVoteWinnerForTerm(electionterm):
+        numvotes = 0
+        candidateleaderid = ''
+
+        print electionterm
+        for candidate, supporters in votes[electionterm].iteritems():
+                print "{}   {}".format(candidate,supporters)
+                if len(supporters) > numvotes:
+                        numvotes = len(supporters)
+                        candidateleaderid = candidate
+
+        return (candidateleaderid, numvotes)
+
+
+my_id = sys.argv[1]
+replica_ids = sys.argv[2:]
+all_ids = [my_id] + replica_ids
+
+state = 'follower'
+term = 0
+votes = {}
+myvotes = {}
+
+# Connect to the network. All messages to/from other replicas and clients will
+# occur over this socket
+sock = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+sock.connect(my_id)
+
+last = 0
+
+leader = '0000'
+readytovote = True
+
+
+hearFromLeader = time.time()
+
+
+while True:
+        ready = select.select([sock], [], [], 0.1)[0]
+
+        if sock in ready:
+                msg_raw = sock.recv(32768)
+
+                if len(msg_raw) == 0: continue
+                msg = json.loads(msg_raw)
+
+
+                if msg['src'] == leader:
+                        print 'heres the leader'
+                        hearFromLeader = time.time()
+
+
+                now = time.time()
+                if now - hearFromLeader > 2 and not state == 'leader':
+                        print '{} WHERES THE LEADER?'.format(my_id)
+                        readytovote = True
+
+
+                if readytovote:
+                        # TODO: make this voting shit work as a function:
+                        term += 1
+                        state = 'candidate'
+                        print '{} wants to vote'.format(my_id)
+                        # TODO: should Implement vote for myself here? most likely
+                        election_msg = {
+                                                'src': my_id,
+                                                'leader': 'FFFF',
+                                                'dst': 'FFFF',
+                                                'type': 'requestvote',
+                                                'term': term,
+                                        }
+                        send(election_msg)
+
+                        readytovote = False
+
+
+
+                if msg['type'] in ['get', 'put']:
+
+                        if state == 'leader': #broadcast to everyone get them to implement
+
+                                # print 'I am the leader MID: {}  wants me to {}'.format(msg['MID'], msg['type'])
+
+                                response_msg = {
+                                                        'src' : my_id,
+                                                        'dst' : msg['src'],
+                                                        'leader' : leader,
+                                                        'type' : 'fail',
+                                                        'MID' : msg['MID']
+                                                }
+                                send(response_msg)
+
+
+                        else: # redirect client to the leader
+                                print 'redirecting from {}'.format(msg['src'])
+                                response_msg = {
+                                                        'src' : my_id,
+                                                        'dst' : msg['src'],
+                                                        'leader' : leader,
+                                                        'type' : 'redirect',
+                                                        'MID' : msg['MID']
+                                                }
+                                send(response_msg)
+
+
+
+
+                if msg['type'] == 'requestvote':
+                    	# votes are first come first serve
+
+                        if not myvotes.get(term):
+        	            	candidate = msg['src']
+                                term = msg['term']
+                                myvotes[term] = candidate
+                                votes[term] = {}
+                                votes[term][candidate] = [my_id]
+                                vote_msg = {
+                                                'leader' : leader,
+                                                'type'   : 'vote',
+                                                'vote'   : candidate,
+                                                'term'   : term,
+                                                'dst'    : 'FFFF',
+                                                'src'    : my_id
+                                           }
+                                send(vote_msg)
+                        else: # I already voted this term
+                                pass
+
+                if msg['type'] == 'vote':
+                        candidate = msg['vote']
+                        electionterm = msg['term']
+                        if not votes.get(electionterm):
+                                votes[term] = {}
+                        if not votes[term].get(candidate):
+                                votes[term][candidate] = []
+
+                        votes[term][candidate].append(msg['src'])
+
+                        (currentVoteWinner, numvotes) = checkVoteWinnerForTerm(electionterm=electionterm)
+                        if numvotes > len(all_ids) / 2:
+                                leader = currentVoteWinner
+
+                                # once we found a leader do we need to continue election process? idk
+
+                                if leader == my_id:
+                                        state = 'leader'
+                                        print '{} I AM YOUR LEADER BOW TO ME'.format(my_id)
+                                        broadcast_msg = {
+                                                                'leader' : leader,
+                                                                'type'   : 'new-leader',
+                                                                'src'    : my_id,
+                                                                'dst'    : 'FFFF',
+                                                                'term'   : term
+                                                        }
+
+                                        send(broadcast_msg)
+                        else:
+                                print "{} hasnt found a majoirty leader yet".format(my_id)
+
+
+                if msg['type'] == 'new-leader':
+                        #easy case everyone agrees
+                        if term == msg['term'] and leader == msg['leader']:
+                                state = 'follower'
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        #         # Handle noop messages. This may be removed from your final implementation
+        #         elif msg['type'] == 'noop':
+        #                 print '%s received a NOOP from %s' % (msg['dst'], msg['src'])
+
+        # clock = time.time()
+        # if clock-last > 2:
+        #         # Send a no-op message to a random peer every two seconds, just for fun
+        #         # You definitely want to remove this from your implementation
+        #         msg = {'src': my_id, 'dst': random.choice(replica_ids), 'leader': 'FFFF', 'type': 'noop'}
+        #         sock.send(json.dumps(msg))
+        #         # print '%s sending a NOOP to %s' % (msg['src'], msg['dst'])
+        #         last = clock
+
+
+
+
+
+#1  Add basic support for responding to client get() and put() requests. At this point, you can respond to all requests with a "type": "fail" message.
+#2  Implement the Raft election protocol (section 5.2 of the Raft paper); add the ability to respond to get() and put() requests with "type": "redirect" messages.
+
+#3  Add a timeout to detect leader failures (i.e. if you don't hear from the leader in X milliseconds...) and make sure that the new election proceeds correctly.
+#4  Implement a basic, empty version of the AppendEntries RPC call that doesn't replicate any data, but acts as a keepalive message from the leader to other replicas to prevent unnecessary elections.
+#5  Implement the transaction log and the "state machine" (i.e. a dictionary containing the key/value pairs from clients, Section 5.3). Don't bother replicating the transactions, just ensure that the leader is able to correctly answer get() and put() requests.
+#6  Improve your AppendEntries RPC call to actually send data to replicas. Ensure that updates are only committing when a quorum is in agreement.
+#7  Add support for retrying failed commits and test it by experimenting with lossy network simulations.
+#8  If you haven't already, modify the leader election to support the additional restrictions in Section 5.4.1; test your implementation on lossy networks with failed leaders.
+#9  Implement the subtle commit restriction given in Section 5.4.2.
+#10 Test, test, test, and test some more ;)
+# Step 6 will probably require the most time in terms of writing code and debugging, since it is the crux of the algorithm. Implementing steps 7-9 are necessary to ensure correctness of the protocol, but shouldn't be too difficult.
