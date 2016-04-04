@@ -18,9 +18,7 @@ def checkVoteWinnerForTerm(electionterm):
         numvotes = 0
         candidateleaderid = ''
 
-        print electionterm
         for candidate, supporters in votes[electionterm].iteritems():
-                print "{}   {}".format(candidate,supporters)
                 if len(supporters) > numvotes:
                         numvotes = len(supporters)
                         candidateleaderid = candidate
@@ -44,7 +42,7 @@ sock.connect(my_id)
 
 last = 0
 
-leader = '0000'
+leader = 'FFFF'
 readytovote = True
 
 
@@ -62,12 +60,14 @@ while True:
 
 
                 if msg['src'] == leader:
-                        print 'heres the leader'
+                        print msg
                         hearFromLeader = time.time()
 
 
+
                 now = time.time()
-                if now - hearFromLeader > 2 and not state == 'leader':
+
+                if now - hearFromLeader > 3 and not state == 'leader':
                         print '{} WHERES THE LEADER?'.format(my_id)
                         readytovote = True
 
@@ -155,9 +155,8 @@ while True:
                         (currentVoteWinner, numvotes) = checkVoteWinnerForTerm(electionterm=electionterm)
                         if numvotes > len(all_ids) / 2:
                                 leader = currentVoteWinner
-
-                                # once we found a leader do we need to continue election process? idk
-
+                                print '{} is the leader'.format(my_id)
+                                # once we found a leader do we need to continue election process? idk probably not can help w latency
                                 if leader == my_id:
                                         state = 'leader'
                                         print '{} I AM YOUR LEADER BOW TO ME'.format(my_id)
@@ -175,9 +174,9 @@ while True:
 
 
                 if msg['type'] == 'new-leader':
-                        #easy case everyone agrees
-                        if term == msg['term'] and leader == msg['leader']:
-                                state = 'follower'
+                        # check if the term is as expected?
+                        state = 'follower'
+                        leader = msg['leader']
 
 
 
@@ -191,24 +190,11 @@ while True:
 
 
 
-
-
-
-
-
-
-        #         # Handle noop messages. This may be removed from your final implementation
-        #         elif msg['type'] == 'noop':
-        #                 print '%s received a NOOP from %s' % (msg['dst'], msg['src'])
-
-        # clock = time.time()
-        # if clock-last > 2:
-        #         # Send a no-op message to a random peer every two seconds, just for fun
-        #         # You definitely want to remove this from your implementation
-        #         msg = {'src': my_id, 'dst': random.choice(replica_ids), 'leader': 'FFFF', 'type': 'noop'}
-        #         sock.send(json.dumps(msg))
-        #         # print '%s sending a NOOP to %s' % (msg['src'], msg['dst'])
-        #         last = clock
+        clock = time.time()
+        if clock-last > 2:
+                print "{} is in state {}, thinks {} is leader".format(my_id, state, leader)
+                print state
+                last = clock
 
 
 
