@@ -44,7 +44,8 @@ class LogEntry:
                 value = self.value
                 self.committed = True
             else:
-                print "silly you already committed this, not committed because committing out of order can mess things up"
+                pass
+                # print "silly you already committed this, not committed because committing out of order can mess things up"
 
 
 
@@ -336,9 +337,6 @@ while True:
 
                         leaderCommitIndex = msg['leaderCommit']
 
-                        if my_id == "0000":
-                            print range(leaderCommitIndex+1, logIndex+1)
-
                         for index in range(leaderCommitIndex+1, logIndex+1):
                             transactionlog[index].commit()
                             LastCommittedIndex = index
@@ -395,6 +393,8 @@ while True:
         if clock - last > 4:
                 print "{} is in state {}, thinks {} is leader of term {}".format(my_id, state, leader, currentterm)
                 last = clock
+                if my_id == leader:
+                    print len(statemachine)
 
 
 
