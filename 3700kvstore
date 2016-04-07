@@ -51,6 +51,14 @@ class LogEntry:
 def send(msg):
 	sock.send(json.dumps(msg))
 
+def getUncommittedEntries():
+    return transactionlog[commitIndex:]
+
+def getEntryWithThisMID(mid):
+    for entry in transactionlog:
+        if entry.MID == mid:
+            return entry
+
 
 my_id = sys.argv[1]
 replica_ids = sys.argv[2:]
@@ -81,11 +89,20 @@ keepaliveclock = time.time()
 transactionlog = []
 statemachine = {}
 
+logIndex = 0
+commitIndex = 0
+
+messageLog = {}
+replicaCommitIndeces = {}
+
 
 
  
 
 while True:
+        logIndex = len(transactionlog)
+
+
         ready = select.select([sock], [], [], 0.1)[0]
 
         now = time.time()
@@ -172,23 +189,41 @@ while True:
                             if msg['type'] == 'get':
                                 key = msg['key']
                                 response_value = statemachine.get(key, False)
-                                getresponse_msg = {
-                                                        'src' : my_id,
-                                                        'dst' : 'FFFF',
-                                                     'leader' : leader,
-                                                       'type' : 'append-entries',
-                                                }
+
+                                if response_value:
+                                    getresponse_msg = {
+                                                            'src' : my_id,
+                                                            'dst' : msg['src'],
+                                                         'leader' : leader,
+                                                           'type' : 'ok',
+                                                           'MID'  : msg['MID'],
+                                                        'value'   : value,
+                                                    }
+                                    send(getresponse_msg)
+
+                                else:
+                                    failresponse_msg = {
+                                                            'src' : my_id,
+                                                            'dst' : msg['src'],
+                                                         'leader' : leader,
+                                                           'type' : 'fail',
+                                                           'MID'  : msg['MID'],
+                                                    }
+                                    send(failresponse_msg)
+
 
                             elif msg['type'] == 'put':
+                                messageLog[msg['MID']] = msg['src']
 
                                 key = msg['key']
-                                value = msg.get('value', False)
+                                value = msg['value']
 
                                 entry = LogEntry({       
                                                         'command' : msg['type'],
                                                             'key' : key,
                                                           'value' : value,
-                                                           'term' : currentterm
+                                                           'term' : currentterm,
+                                                           'MID'  : msg['MID']
 
                                                 })
                                 transactionlog.append(entry)
@@ -198,12 +233,12 @@ while True:
                                                         'dst' : 'FFFF',
                                                      'leader' : leader,
                                                        'type' : 'append-entries',
-                                                    'entries' : [entry.toDict()],
+                                                      'entry' : entry.toDict(),
                                                       'term'  : currentterm,
                                                       # TODO: prevlogindex, prevlogterm, leaderCommit
                                                'prevLogIndex' : '',
                                                 'prevLogTerm' : 0,
-                                               'leaderCommit' : ''
+                                               'leaderCommit' : commitIndex
                                                   }
                                 send(appendentry_msg)
 
@@ -307,18 +342,51 @@ while True:
 
 
                 if msg['type'] == 'append-entries':
-                        newEntry = msg['entries'][0]
+                        newEntry = msg['entry']
                         entry = LogEntry(newEntry)
                         transactionlog.append(entry)
-                        indexToCommit = transactionlog.index(entry)
-                        readytocommit_msg = {
+                        # indexToCommit = transactionlog.index(entry)
+
+                        leaderCommitIndex = msg['leaderCommit']
+
+                        for index in range(leaderCommitIndex+1, logIndex+1):
+                            transactionlog[index].commit()
+                            commitIndex = index
+
+
+                        appendentry_response_msg = {
                                 'leader' : leader,
                                 'src' : my_id,
                                 'dst' : leader,
-                                'type' : 'append-response',
-                                'index' : indexToCommit,
+                                'type' : 'append-entry-response',
+                                'commitIndex' : commitIndex,
+                                'logIndex' : logIndex,
                         }
-                        send(readytocommit_msg)
+                        send(appendentry_response_msg)
+
+
+                if msg['type'] == 'append-entry-response':
+                    replicaCommitIndeces[msg['src']] = msg['commitIndex']
+                    print replicaCommitIndeces
+
+                    unCommitted = getUncommittedEntries()
+
+                    for index in range(commitIndex, logIndex): # transactionLog[index] are all uncommitted
+                        numReplicasAlreadyCommittedThis = 0
+                        for replica, cIndex in replicaCommitIndeces.iteritems():
+                            if cIndex > index:
+                                numReplicasAlreadyCommittedThis += 1
+
+                        if numReplicasAlreadyCommittedThis > len(all_ids) / 2:
+                            transactionlog[index].commit()
+                            commitIndex = index
+                            print 'leader committed at index {}'.format(index)
+
+
+
+
+
+
 
 
 
