@@ -19,6 +19,7 @@ class LogEntry:
         def __init__(self, initial_data):
                 for key in initial_data:
                     setattr(self, key, initial_data[key])
+                    committed = False
 
 
         def __repr__(self):
@@ -41,6 +42,7 @@ class LogEntry:
                 if self.command == 'put':
                         statemachine[self.key] = self.value
                         value = self.value
+                        committed = True
 
 
 
@@ -78,6 +80,8 @@ keepaliveclock = time.time()
 
 transactionlog = []
 statemachine = {}
+
+
 
  
 
@@ -124,6 +128,8 @@ while True:
 
                 hearFromLeader = time.time()
 
+
+                #TODO: this is probably not neccesary since everyone only keeps track of their own votes
                 vote_msg = {
                                                 'leader' : leader,
                                                 'type'   : 'vote',
@@ -162,6 +168,18 @@ while True:
                 if msg['type'] in ['get', 'put']:
 
                         if state == 'leader': 
+
+                            if msg['type'] == 'get':
+                                key = msg['key']
+                                response_value = statemachine.get(key, False)
+                                getresponse_msg = {
+                                                        'src' : my_id,
+                                                        'dst' : 'FFFF',
+                                                     'leader' : leader,
+                                                       'type' : 'append-entries',
+                                                }
+
+                            elif msg['type'] == 'put':
 
                                 key = msg['key']
                                 value = msg.get('value', False)
@@ -289,16 +307,25 @@ while True:
 
 
                 if msg['type'] == 'append-entries':
-
                         newEntry = msg['entries'][0]
                         entry = LogEntry(newEntry)
                         transactionlog.append(entry)
+                        indexToCommit = transactionlog.index(entry)
+                        readytocommit_msg = {
+                                'leader' : leader,
+                                'src' : my_id,
+                                'dst' : leader,
+                                'type' : 'append-response',
+                                'index' : indexToCommit,
+                        }
+                        send(readytocommit_msg)
 
 
 
 
+                        # TODO: commit needs to make sure everything before it is committed
+                        # TODO: do we need to keep track of MID associated with log entry?
 
-                        
 
 
 
