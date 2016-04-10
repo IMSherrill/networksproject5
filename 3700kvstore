@@ -131,6 +131,7 @@ while True:
 
         if readytovote:
                 currentterm += 1
+                print "{} updating term requesting vote".format(my_id)
                 electionclock = time.time()
                 timeoutlength = random.uniform(.150, .300)
 
@@ -200,7 +201,7 @@ while True:
                                                          'leader' : leader,
                                                            'type' : 'ok',
                                                            'MID'  : msg['MID'],
-                                                        'value'   : value,
+                                                        'value'   : response_value,
                                                     }
                                     send(getresponse_msg)
 
@@ -216,6 +217,7 @@ while True:
 
 
                             elif msg['type'] == 'put':
+
 
                                 messageLog[msg['MID']] = msg['src']
 
@@ -246,18 +248,15 @@ while True:
                                                   }
                                 send(appendentry_msg)
 
-                                # TODO: response for puts 
-
-
                         else: # redirect client to the leader
-                                redirect_msg = {
-                                                        'src' : my_id,
-                                                        'dst' : msg['src'],
-                                                        'leader' : leader,
-                                                        'type' : 'redirect',
-                                                        'MID' : msg['MID']
-                                                }
-                                send(redirect_msg)
+                            redirect_msg = {
+                                                    'src' : my_id,
+                                                    'dst' : msg['src'],
+                                                    'leader' : leader,
+                                                    'type' : 'redirect',
+                                                    'MID' : msg['MID']
+                                            }
+                            send(redirect_msg)
 
 
 
@@ -339,6 +338,7 @@ while True:
 
                         for index in range(leaderCommitIndex+1, logIndex+1):
                             transactionlog[index].commit()
+
                             LastCommittedIndex = index
 
 
@@ -363,9 +363,23 @@ while True:
                                 numReplicasAlreadyCommittedThis += 1
 
                         if numReplicasAlreadyCommittedThis > len(all_ids) / 2:
-                            transactionlog[index].commit()
-                            LastCommittedIndex = index
-                            print 'leader committed at index {}'.format(index)
+                            if not transactionlog[index].committed:
+
+                                transactionlog[index].commit()
+                                LastCommittedIndex = index
+                                print 'leader committed at index {}'.format(index)
+
+                                entryMID = transactionlog[index].MID
+
+                                # TODO: what would make this incorrect?
+                                response_msg = {
+                                                    'src' :  my_id,
+                                                    'dst' :  messageLog.get(entryMID),
+                                                 'leader' : leader,
+                                                   'type' : 'ok',
+                                                    'MID' : entryMID
+                                }
+                                send(response_msg)
 
 
 
