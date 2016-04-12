@@ -336,7 +336,7 @@ while True:
 
                         leaderCommitIndex = msg['leaderCommit']
 
-                        for index in range(leaderCommitIndex+1, logIndex+1):
+                        for index in range(leaderCommitIndex+1, len(transactionlog)):
                             transactionlog[index].commit()
                             # print 'follower committed at index {} of {}'.format(index, len(transactionlog))
 
@@ -360,7 +360,7 @@ while True:
                     for index in range(LastCommittedIndex + 1, len(transactionlog) + 1): # transactionLog[index] are all uncommitted
                         numReplicasAlreadyCommittedThis = 0
                         for replica, cIndex in replicaCommitIndeces.iteritems():
-                            if cIndex > index:
+                            if cIndex >= index:
                                 numReplicasAlreadyCommittedThis += 1
 
                         # TODO: Comment below?
