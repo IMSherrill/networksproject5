@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import os
 import sys
 import socket
 import select
@@ -7,15 +8,13 @@ import time
 import json
 import random
 from datetime import datetime
+from pprint import pprint
+
+#### this keeps it from printing out, useful for when running ./test
+# f = open(os.devnull, 'w')
+# sys.stdout = f
 
 class LogEntry:
-        # def __init__(self, command, key, value, term):
-        #         self.command = command
-        #         self.key = key
-        #         self.value = value
-        #         self.term = term
-
-
         def __init__(self, initial_data):
                 for key in initial_data:
                     setattr(self, key, initial_data[key])
@@ -218,7 +217,6 @@ while True:
 
                             elif msg['type'] == 'put':
 
-
                                 messageLog[msg['MID']] = msg['src']
 
                                 key = msg['key']
@@ -248,6 +246,7 @@ while True:
                                                   }
                                 send(appendentry_msg)
 
+
                         else: # redirect client to the leader
                             redirect_msg = {
                                                     'src' : my_id,
@@ -261,7 +260,7 @@ while True:
 
 
 
-                if msg['type'] == 'requestvote':
+                elif msg['type'] == 'requestvote':
 
                         currentterm = msg['term']
 
@@ -286,7 +285,7 @@ while True:
 
 
 
-                if msg['type'] == 'vote':
+                elif msg['type'] == 'vote':
                         candidate = msg['vote']
                         electionterm = msg['term']
 
@@ -320,7 +319,7 @@ while True:
                                 
 
 
-                if msg['type'] == 'new-leader':
+                elif msg['type'] == 'new-leader':
                         # check if the term is as expected?
                         state = 'follower'
                         leader = msg['leader']
@@ -328,7 +327,8 @@ while True:
 
 
 
-                if msg['type'] == 'append-entries':
+                elif msg['type'] == 'append-entries':
+
                         newEntry = msg['entry']
                         entry = LogEntry(newEntry)
                         transactionlog.append(entry)
@@ -338,6 +338,7 @@ while True:
 
                         for index in range(leaderCommitIndex+1, logIndex+1):
                             transactionlog[index].commit()
+                            # print 'follower committed at index {} of {}'.format(index, len(transactionlog))
 
                             LastCommittedIndex = index
 
@@ -353,21 +354,22 @@ while True:
                         send(appendentry_response_msg)
 
 
-                if msg['type'] == 'append-entry-response':
+                elif msg['type'] == 'append-entry-response':
                     replicaCommitIndeces[msg['src']] = msg['LastCommittedIndex']
 
-                    for index in range(LastCommittedIndex + 1, logIndex + 1): # transactionLog[index] are all uncommitted
+                    for index in range(LastCommittedIndex + 1, len(transactionlog) + 1): # transactionLog[index] are all uncommitted
                         numReplicasAlreadyCommittedThis = 0
                         for replica, cIndex in replicaCommitIndeces.iteritems():
                             if cIndex > index:
                                 numReplicasAlreadyCommittedThis += 1
 
-                        if numReplicasAlreadyCommittedThis > len(all_ids) / 2:
+                        # TODO: Comment below?
+                        if numReplicasAlreadyCommittedThis + 1 > len(all_ids) / 2: # the + 1 is to include myself (leader)
                             if not transactionlog[index].committed:
 
                                 transactionlog[index].commit()
                                 LastCommittedIndex = index
-                                print 'leader committed at index {}'.format(index)
+                                print 'leader committed at index {} of {}'.format(index, len(transactionlog))
 
                                 entryMID = transactionlog[index].MID
 
@@ -380,8 +382,6 @@ while True:
                                                     'MID' : entryMID
                                 }
                                 send(response_msg)
-
-
 
 
 
@@ -403,12 +403,13 @@ while True:
 
 
 
-        clock = time.time()
-        if clock - last > 4:
-                print "{} is in state {}, thinks {} is leader of term {}".format(my_id, state, leader, currentterm)
-                last = clock
-                if my_id == leader:
-                    print len(statemachine)
+        # clock = time.time()
+        # if clock - last > 4:
+        #         print "{} is in state {}, thinks {} is leader of term {}".format(my_id, state, leader, currentterm)
+        #         last = clock
+        #         if my_id == leader:
+        #             print "statemachine: {}".format(len(statemachine))
+        #             print "log {}".format(len(transactionlog))
 
 
 
