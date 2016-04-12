@@ -130,9 +130,9 @@ while True:
 
         if readytovote:
                 currentterm += 1
-                print "{} updating term requesting vote".format(my_id)
+                print "{} requesting vote updating to term {}".format(my_id, currentterm)
                 electionclock = time.time()
-                timeoutlength = random.uniform(.150, .300)
+                timeoutlength = random.uniform(.150, .400)
 
                 state = 'candidate'
                 election_msg = {
@@ -246,6 +246,8 @@ while True:
                                                   }
                                 send(appendentry_msg)
 
+                        elif state == 'candidate':
+                            print '!!!!!!!!!!!!!!!!!!!!'
 
                         else: # redirect client to the leader
                             redirect_msg = {
@@ -403,13 +405,13 @@ while True:
 
 
 
-        # clock = time.time()
-        # if clock - last > 4:
-        #         print "{} is in state {}, thinks {} is leader of term {}".format(my_id, state, leader, currentterm)
-        #         last = clock
-        #         if my_id == leader:
-        #             print "statemachine: {}".format(len(statemachine))
-        #             print "log {}".format(len(transactionlog))
+        clock = time.time()
+        if clock - last > 4:
+                print "{} is in state {}, thinks {} is leader of term {}".format(my_id, state, leader, currentterm)
+                last = clock
+                if my_id == leader:
+                    print "statemachine: {}".format(len(statemachine))
+                    print "log {}".format(len(transactionlog))
 
 
 
