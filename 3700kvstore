@@ -11,8 +11,8 @@ from datetime import datetime
 from pprint import pprint
 
 #### this keeps it from printing out, useful for when running ./test
-# f = open(os.devnull, 'w')
-# sys.stdout = f
+f = open(os.devnull, 'w')
+sys.stdout = f
 
 class LogEntry:
         def __init__(self, initial_data):
@@ -22,18 +22,20 @@ class LogEntry:
 
 
         def __repr__(self):
-                if self.command == 'put':
-                        return "{}    {} -> {}".format(self.term, self.key, self.value)
+                return "<log at index {}>".format(self.index)
+                # if self.command == 'put':
+                #         return "{}    {} -> {}".format(self.term, self.key, self.value)
 
-                if self.command == 'get':
-                        return "{}     client <- {}".format(self.term, self.key)
+                # if self.command == 'get':
+                #         return "{}     client <- {}".format(self.term, self.key)
 
         def toDict(self):
                 return {
                                 'command' : self.command,
                                 'key' : self.key,
                                 'value' : self.value,
-                                'term' : self.term
+                                'term' : self.term,
+                                'index' : self.index
                         }
 
         # TODO: why isnt this working?
@@ -58,6 +60,19 @@ def getIndexOfEntryWithThisMID(mid):
     while index < len(transactionlog):
         if transactionlog[index].MID == mid:
             return index
+
+def MakeSureEverythingIsInOrder():
+    pass
+    # for index in range(0, len(transactionlog)):
+    #     if index == transactionlog[index].index:
+    #         # good
+    #         pass
+    #     else:
+    #         print 'something is out of order'
+
+    # print [a.index for a in transactionlog if not a == transactionlog[a.index]]
+
+
 
 
 my_id = sys.argv[1]
@@ -101,6 +116,10 @@ replicaCommitIndeces = {}
 
 while True:
         logIndex = len(transactionlog)
+
+
+        MakeSureEverythingIsInOrder()
+
 
 
         ready = select.select([sock], [], [], 0.1)[0]
@@ -227,12 +246,17 @@ while True:
                                                             'key' : key,
                                                           'value' : value,
                                                            'term' : currentterm,
-                                                           'MID'  : msg['MID']
+                                                           'MID'  : msg['MID'],
+                                                           'index': len(transactionlog)
 
                                                 }
 
                                 entry = LogEntry(entrydict)
                                 transactionlog.append(entry)
+
+                                prevLogIndex = len(transactionlog) - 2 # append and lenth is one more than last index
+                                prevLogTerm = transactionlog[prevLogIndex].term
+
 
                                 appendentry_msg = {
                                                         'src' : my_id,
@@ -242,7 +266,9 @@ while True:
                                                       'entry' : entrydict,
                                                       'term'  : currentterm,
                                                 # TODO: if leader has committed up to here, than you can too because quorum must have been reached
-                                               'leaderCommit' : LastCommittedIndex
+                                               'leaderCommit' : LastCommittedIndex,
+                                               'prevLogIndex' : prevLogIndex,
+                                               'prevLogTerm'  : prevLogTerm,
                                                   }
                                 send(appendentry_msg)
 
@@ -262,7 +288,7 @@ while True:
 
 
 
-                elif msg['type'] == 'requestvote':
+                if msg['type'] == 'requestvote':
 
                         currentterm = msg['term']
 
@@ -287,7 +313,7 @@ while True:
 
 
 
-                elif msg['type'] == 'vote':
+                if msg['type'] == 'vote':
                         candidate = msg['vote']
                         electionterm = msg['term']
 
@@ -321,7 +347,7 @@ while True:
                                 
 
 
-                elif msg['type'] == 'new-leader':
+                if msg['type'] == 'new-leader':
                         # check if the term is as expected?
                         state = 'follower'
                         leader = msg['leader']
@@ -329,21 +355,35 @@ while True:
 
 
 
-                elif msg['type'] == 'append-entries':
-
+                if msg['type'] == 'append-entries':
                         newEntry = msg['entry']
                         entry = LogEntry(newEntry)
+
+
+                        if len(transactionlog) > 0:
+                            lastEntry = transactionlog[-1]
+                            expectedIndex = lastEntry.index + 1
+                            if entry.index == expectedIndex:
+                                # print 'I got what I expected'
+                                pass
+                            else:
+                                # TODO: respond to client 
+                                # print 'ruh roh {}'.format(entry.index)
+                                request_entry_msg = {
+                                        'leader'        : leader,
+                                        'src'           : my_id,
+                                        'dst'           : leader,
+                                        'type'          : 'request-fill',
+                                        'expectedIndex' : expectedIndex,
+                                }
+                                send(request_entry_msg)
+                                continue
+                                # ignore it if its not what I expect
+
+
                         transactionlog.append(entry)
-                        # indexToCommit = transactionlog.index(entry)
-
-                        leaderCommitIndex = msg['leaderCommit']
-
-                        for index in range(leaderCommitIndex+1, len(transactionlog)):
-                            transactionlog[index].commit()
-                            # print 'follower committed at index {} of {}'.format(index, len(transactionlog))
-
-                            LastCommittedIndex = index
-
+                        entry.commit()
+                        LastCommittedIndex = entry.index
 
                         appendentry_response_msg = {
                                 'leader' : leader,
@@ -356,23 +396,22 @@ while True:
                         send(appendentry_response_msg)
 
 
-                elif msg['type'] == 'append-entry-response':
+
+                if msg['type'] == 'append-entry-response':
                     replicaCommitIndeces[msg['src']] = msg['LastCommittedIndex']
 
-                    for index in range(LastCommittedIndex + 1, len(transactionlog) + 1): # transactionLog[index] are all uncommitted
+                    print replicaCommitIndeces
+
+                    for index in range(LastCommittedIndex , len(transactionlog) + 1): # transactionLog[index] are all uncommitted
                         numReplicasAlreadyCommittedThis = 0
                         for replica, cIndex in replicaCommitIndeces.iteritems():
                             if cIndex >= index:
                                 numReplicasAlreadyCommittedThis += 1
 
-                        # TODO: Comment below?
                         if numReplicasAlreadyCommittedThis + 1 > len(all_ids) / 2: # the + 1 is to include myself (leader)
                             if not transactionlog[index].committed:
 
                                 transactionlog[index].commit()
-                                LastCommittedIndex = index
-                                print 'leader committed at index {} of {}'.format(index, len(transactionlog))
-
                                 entryMID = transactionlog[index].MID
 
                                 # TODO: what would make this incorrect?
@@ -386,9 +425,23 @@ while True:
                                 send(response_msg)
 
 
+                if msg['type'] == 'request-fill':
+                    expectedIndex = msg['expectedIndex']
+                    entries = transactionlog[expectedIndex:]
+                    entriesDict = [e.toDict() for e in entries]
+                    fill_msg = {
+                                'src' : my_id,
+                                'dst' : msg['src'],
+                             'leader' : leader,
+                             'entries': entriesDict,
+                               'type' : 'fill-in',
+                    }
+                    send(fill_msg)
 
-
-
+                if msg['type'] == 'fill-in':
+                    entriesDict = msg['entries']
+                    entries = [LogEntry(e) for e in entriesDict]
+                    transactionlog = transactionlog + entries
 
 
 
@@ -405,13 +458,13 @@ while True:
 
 
 
-        clock = time.time()
-        if clock - last > 4:
-                print "{} is in state {}, thinks {} is leader of term {}".format(my_id, state, leader, currentterm)
-                last = clock
-                if my_id == leader:
-                    print "statemachine: {}".format(len(statemachine))
-                    print "log {}".format(len(transactionlog))
+        # clock = time.time()
+        # if clock - last > 4:
+        #         # print "{} is in state {}, thinks {} is leader of term {}".format(my_id, state, leader, currentterm)
+        #         if my_id == leader:
+        #             print ["+" if c.committed else c.index for c in transactionlog]
+        #         last = clock
+
 
 
 
