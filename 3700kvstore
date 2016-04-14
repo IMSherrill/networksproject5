@@ -11,8 +11,8 @@ from datetime import datetime
 from pprint import pprint
 
 #### this keeps it from printing out, useful for when running ./test
-f = open(os.devnull, 'w')
-sys.stdout = f
+# f = open(os.devnull, 'w')
+# sys.stdout = f
 
 class LogEntry:
         def __init__(self, initial_data):
@@ -72,12 +72,17 @@ def MakeSureEverythingIsInOrder():
 
     # print [a.index for a in transactionlog if not a == transactionlog[a.index]]
 
+def getUncommittedEntries():
+    return transactionlog[LastCommittedIndex + 1:]
+
 
 
 
 my_id = sys.argv[1]
 replica_ids = sys.argv[2:]
 all_ids = [my_id] + replica_ids
+
+startTime = time.time()
 
 state = 'candidate'
 currentterm = 0
@@ -107,8 +112,11 @@ statemachine = {}
 logIndex = 0
 LastCommittedIndex = 0
 
-messageLog = {}
+messageToClient = {}
 replicaCommitIndeces = {}
+
+messageToTimeStamp = {}
+UNCOMMIT_TIMEOUT = 8
 
 FILL_CHUNK_SIZE = 50  #play with this value for optimization + latecny (bigger is better)
 
@@ -185,6 +193,27 @@ while True:
                 readytovote = False
 
 
+        ##########################################
+        #### CHECK TO SEE IF A PUT TIMED OUT #####
+        ##########################################
+        #TODO: is this gonna add a shitload of latency?
+        # if state == 'leader':
+        #     uncommittedEntries = getUncommittedEntries()
+        #     for entry in uncommittedEntries:
+        #         now = time.time()
+        #         if now - messageToTimeStamp[entry.MID] > UNCOMMIT_TIMEOUT:
+        #             if not entry.committed:
+        #                 print 'GOTTA TELL A CLIENT FAIL BECAUSE TIMEOUT'
+        #                 print time.time() - startTime
+        #                 destination = messageToClient[entry.MID]
+        #                 put_fail_message = {
+        #                                                         'src' : my_id,
+        #                                                         'dst' : destination,
+        #                                                      'leader' : leader,
+        #                                                        'type' : 'fail',
+        #                                                        'MID'  : entry.MID,
+        #                                                 }
+
 
 
 
@@ -238,7 +267,8 @@ while True:
 
                             elif msg['type'] == 'put':
 
-                                messageLog[msg['MID']] = msg['src']
+                                messageToClient[msg['MID']] = msg['src']
+                                messageToTimeStamp[msg['MID']] = time.time()
 
                                 key = msg['key']
                                 value = msg['value']
@@ -386,6 +416,7 @@ while True:
                         transactionlog.append(entry)
                         entry.commit()
                         LastCommittedIndex = entry.index
+                        LogIndex = len(transactionlog)
 
                         appendentry_response_msg = {
                                 'leader' : leader,
@@ -419,7 +450,7 @@ while True:
                                 # TODO: what would make this incorrect?
                                 response_msg = {
                                                     'src' :  my_id,
-                                                    'dst' :  messageLog.get(entryMID),
+                                                    'dst' :  messageToClient.get(entryMID),
                                                  'leader' : leader,
                                                    'type' : 'ok',
                                                     'MID' : entryMID
@@ -468,6 +499,22 @@ while True:
 
                         if entries[0].index == expectedIndex:
                             transactionlog = transactionlog + entries
+                            for entry in entries:
+                                entry.commit()
+                            LastCommittedIndex = transactionlog[-1].index
+                            LogIndex = len(transactionlog)
+                            # TODO: should probably sent a repsonse saying ok so the leader can update the commit indeces?
+
+                            appendentry_response_msg = {
+                                    'leader' : leader,
+                                    'src' : my_id,
+                                    'dst' : leader,
+                                    'type' : 'append-entry-response',
+                                    'LastCommittedIndex' : LastCommittedIndex,
+                                    'logIndex' : logIndex,
+                            }
+                            send(appendentry_response_msg)
+
                         else:
                             request_entry_msg = {
                                     'leader'        : leader,
