@@ -53,7 +53,7 @@ class LogEntry:
 
 
 def send(msg):
-	sock.send(json.dumps(msg))
+	sock.sendall(json.dumps(msg))
 
 def getIndexOfEntryWithThisMID(mid):
     index = 0
@@ -109,6 +109,8 @@ LastCommittedIndex = 0
 
 messageLog = {}
 replicaCommitIndeces = {}
+
+FILL_CHUNK_SIZE = 50  #play with this value for optimization + latecny (bigger is better)
 
 
 
@@ -428,24 +430,54 @@ while True:
                 if msg['type'] == 'request-fill':
                     expectedIndex = msg['expectedIndex']
                     entries = transactionlog[expectedIndex:]
+                    # TODO: fill in in a few messages
                     entriesDict = [e.toDict() for e in entries]
+                    while len(entriesDict) >= FILL_CHUNK_SIZE: #TODO: is it > or >=
+                        firstEntriesDictSecion = entriesDict[:FILL_CHUNK_SIZE]
+                        entriesDict = entriesDict[FILL_CHUNK_SIZE:]
+                        fill_msg = {
+                                    'src' : my_id,
+                                    'dst' : msg['src'],
+                                 'leader' : leader,
+                                 'entries': firstEntriesDictSecion,
+                                   'type' : 'fill-in',
+                        }
+                        send(fill_msg)
+
+
                     fill_msg = {
-                                'src' : my_id,
-                                'dst' : msg['src'],
-                             'leader' : leader,
-                             'entries': entriesDict,
-                               'type' : 'fill-in',
+                                    'src' : my_id,
+                                    'dst' : msg['src'],
+                                 'leader' : leader,
+                                 'entries': entriesDict,
+                                   'type' : 'fill-in',
                     }
                     send(fill_msg)
 
+
                 if msg['type'] == 'fill-in':
-                    entriesDict = msg['entries']
-                    entries = [LogEntry(e) for e in entriesDict]
-                    transactionlog = transactionlog + entries
+                    # TODO: make sure that it starts at the expected index, if not request fill again
+                    if len(transactionlog) > 0:
+                        entriesDict = msg['entries']
+                        entries = [LogEntry(e) for e in entriesDict]
+                        lastEntry = transactionlog[-1]
+                        expectedIndex = lastEntry.index + 1
+                        if len(entries) == 0: #not sure why this would happen
+                            # TODO: why would this happen? investigate later
+                            continue
 
+                        if entries[0].index == expectedIndex:
+                            transactionlog = transactionlog + entries
+                        else:
+                            request_entry_msg = {
+                                    'leader'        : leader,
+                                    'src'           : my_id,
+                                    'dst'           : leader,
+                                    'type'          : 'request-fill',
+                                    'expectedIndex' : expectedIndex,
+                            }
+                            send(request_entry_msg)
 
-
-                        # TODO: commit needs to make sure everything before it is committed
 
 
 
