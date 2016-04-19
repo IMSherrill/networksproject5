@@ -10,50 +10,50 @@ import random
 from datetime import datetime
 from pprint import pprint
 
-#### this keeps it from printing out, useful for when running ./test
-f = open(os.devnull, 'w')
-sys.stdout = f
+# # this keeps it from printing out, useful for when running ./test
+# f = open(os.devnull, 'w')
+# sys.stdout = f
+
 
 class LogEntry:
-        def __init__(self, initial_data):
-                for key in initial_data:
-                    setattr(self, key, initial_data[key])
-                    self.committed = False
 
+    def __init__(self, initial_data):
+        for key in initial_data:
+            setattr(self, key, initial_data[key])
+            self.committed = False
 
-        def __repr__(self):
-                return "<log at index {}>".format(self.index)
-                # if self.command == 'put':
-                #         return "{}    {} -> {}".format(self.term, self.key, self.value)
+    def __repr__(self):
+        return "<log at index {}>".format(self.index)
+        # if self.command == 'put':
+        # return "{}    {} -> {}".format(self.term, self.key, self.value)
 
-                # if self.command == 'get':
-                #         return "{}     client <- {}".format(self.term, self.key)
+        # if self.command == 'get':
+        #         return "{}     client <- {}".format(self.term, self.key)
 
-        def toDict(self):
-                return {
-                                'command' : self.command,
-                                'key' : self.key,
-                                'value' : self.value,
-                                'term' : self.term,
-                                'index' : self.index
-                        }
+    def toDict(self):
+        return {
+            'command': self.command,
+            'key': self.key,
+            'value': self.value,
+            'term': self.term,
+            'index': self.index,
+            'src': self.src,
+            'MID': self.MID
+        }
 
-        # TODO: why isnt this working?
-        def commit(self):
-            if not self.committed:
-                statemachine[self.key] = self.value
-                value = self.value
-                self.committed = True
-            else:
-                pass
-                # print "silly you already committed this, not committed because committing out of order can mess things up"
-
-
-
+    # TODO: why isnt this working?
+    def commit(self):
+        if not self.committed:
+            statemachine[self.key] = self.value
+            value = self.value
+            self.committed = True
+        else:
+            pass
 
 
 def send(msg):
-	sock.sendall(json.dumps(msg))
+    sock.sendall(json.dumps(msg))
+
 
 def getIndexOfEntryWithThisMID(mid):
     index = 0
@@ -61,24 +61,15 @@ def getIndexOfEntryWithThisMID(mid):
         if transactionlog[index].MID == mid:
             return index
 
+
 def MakeSureEverythingIsInOrder():
     pass
-    # for index in range(0, len(transactionlog)):
-    #     if index == transactionlog[index].index:
-    #         # good
-    #         pass
-    #     else:
-    #         print 'something is out of order'
-
-    # print [a.index for a in transactionlog if not a == transactionlog[a.index]]
-
-
 
 
 my_id = sys.argv[1]
 replica_ids = sys.argv[2:]
 all_ids = [my_id] + replica_ids
-
+counter = 0
 state = 'candidate'
 currentterm = 0
 votedForMe = []
@@ -94,425 +85,520 @@ last = 0
 leader = 'FFFF'
 
 hearFromLeader = time.time()
-
 readytovote = False
 electionclock = time.time()
 timeoutlength = random.uniform(.150, .300)
-
 keepaliveclock = time.time()
 
 transactionlog = []
 statemachine = {}
 
-logIndex = 0
+lastlogIndex = 0
 LastCommittedIndex = 0
-
+MID_log = []
 messageLog = {}
 replicaCommitIndeces = {}
+message_queue_put  = []
+message_queue_get = []
+server_responded_true = []
+server_response_states = {}
+failing_servers = []
+messageToClient = []
+for rid in replica_ids:
+    server_response_states[rid] = {'nextIndex': 0,
+                                   'matchIndex': 0}
+# play with this value for optimization + latecny (bigger is better)
+FILL_CHUNK_SIZE = 50
+def heartbeat():
+    global message_queue_get
+    if len(message_queue_get) > 0 and LastCommittedIndex > 0:
+        for msg in message_queue_get:
+            response_value = statemachine.get(msg['key'], False)
+            if response_value:
+                getresponse_msg = {
+                    'src': my_id,
+                    'dst': msg['src'],
+                    'leader': leader,
+                    'type': 'ok',
+                    'MID': msg['MID'],
+                    'value': response_value,
+                }
+                send(getresponse_msg)
+            else:
+                failresponse_msg = {
+                    'src': my_id,
+                    'dst': msg['src'],
+                    'leader': leader,
+                    'type': 'fail',
+                    'MID': msg['MID'],
+                }
+                send(failresponse_msg)
+        message_queue_get = []
 
-FILL_CHUNK_SIZE = 50  #play with this value for optimization + latecny (bigger is better)
 
+    for rid in replica_ids:
+        entry_list = []
+        prevLogIndex = server_response_states[rid]['nextIndex'] - 1
+        prevLogTerm = transactionlog[prevLogIndex].term
 
-
- 
-
+        for x in range(prevLogIndex + 1, len(transactionlog)):
+            entry_list.append(transactionlog[x].toDict())
+        if len(entry_list) > 50:
+            entry_list = entry_list[:50]
+        appendentry_msg = {
+            'src': my_id,
+            'dst': rid,
+            'leader': leader,
+            'type': 'append-entries',
+            'entry': entry_list,
+            'term': currentterm,
+            'leaderCommit': LastCommittedIndex,
+            'prevLogIndex': prevLogIndex,
+            'prevLogTerm': prevLogTerm,
+            'nextIndex': server_response_states[rid]['nextIndex']
+        }
+        send(appendentry_msg)
 while True:
-        logIndex = len(transactionlog)
+    lastlogIndex = len(transactionlog) - 1
 
+    ready = select.select([sock], [], [], 0)[0]
 
-        MakeSureEverythingIsInOrder()
+    now = time.time()
+    if state == 'candidate' and now - electionclock > timeoutlength:
+        readytovote = True
 
+    now = time.time()
+    if now - hearFromLeader > 2 and not state == 'leader':
+        print '!!!!!! ' + my_id
+        readytovote = True
 
-
-        ready = select.select([sock], [], [], 0.1)[0]
-
+    if state == 'leader':
         now = time.time()
-        if state == 'candidate' and now - electionclock > timeoutlength:
-                readytovote = True
+        if now - keepaliveclock > .5:
+            # TODO: keepalive might not be neccesary when i have implemented
+            # append entries RPC, if its empty it will function the same?
+            if len(transactionlog) > 0:
+                heartbeat()
+
+            keepaliveclock = time.time()
 
 
-        now = time.time()
-        if now - hearFromLeader > 2 and not state == 'leader':
-                readytovote = True
+    if readytovote:
+        currentterm += 1
+        print "{} requesting vote updating to term {}".format(my_id, currentterm)
+        electionclock = time.time()
+        timeoutlength = random.uniform(.150, .400)
+        if len(transactionlog) > 0:
+            prevLogTerm = transactionlog[-1].term
+        else:
+            prevLogTerm = 0
+        state = 'candidate'
+        election_msg = {
+            'src': my_id,
+            'leader': 'FFFF',
+            'dst': 'FFFF',
+            'type': 'requestvote',
+            'term': currentterm,
+            'prevLogTerm': prevLogTerm,
+            'lengthOfLog': len(transactionlog)
+        }
+        send(election_msg)
+
+        hearFromLeader = time.time()
+
+        votedForMe = [my_id]
+        myvotes[currentterm] = my_id
+
+        readytovote = False
+
+    #######################
+    #  RECIEVING MESSAGE  #
+    #######################
+    if sock in ready:
+        t0 = time.time()
+        msg_raw = sock.recv(64000)
+ 
+        if len(msg_raw) == 0:
+            continue
+        msg = json.loads(msg_raw)
+
+        if msg['src'] == leader:
+            hearFromLeader = time.time()
 
 
-        if state == 'leader':
-                now = time.time()
-                if now - keepaliveclock > .5:
-                        # TODO: keepalive might not be neccesary when i have implemented append entries RPC, if its empty it will function the same?
-                        keepalive_msg = {
-                                                'src' : my_id,
-                                             'leader' : leader,
-                                                'dst' : 'FFFF',
-                                               'type' : 'keepalive',
-                                        }
-                        send(keepalive_msg)
-                        keepaliveclock = time.time()
+        if msg['type'] in ['get', 'put']:
+            if state == 'leader':
 
-        if readytovote:
-                currentterm += 1
-                print "{} requesting vote updating to term {}".format(my_id, currentterm)
-                electionclock = time.time()
-                timeoutlength = random.uniform(.150, .400)
+                if msg['type'] == 'get':
+                    response_value = False
+                    key = msg['key']
+                    # TODO: if there is no value for that key respond with
+                    # empty string
+                    response_value = statemachine.get(key, False)
+                    if response_value:
+                        getresponse_msg = {
+                            'src': my_id,
+                            'dst': msg['src'],
+                            'leader': leader,
+                            'type': 'ok',
+                            'MID': msg['MID'],
+                            'value': response_value,
+                        }
+                        send(getresponse_msg)
 
-                state = 'candidate'
-                election_msg = {
-                                        'src': my_id,
-                                        'leader': 'FFFF',
-                                        'dst': 'FFFF',
-                                        'type': 'requestvote',
-                                        'term': currentterm,
-                                }
-                send(election_msg)
+                    else:
+                        failresponse_msg = {
+                            'src': my_id,
+                            'dst': msg['src'],
+                            'leader': leader,
+                            'type': 'fail',
+                            'MID': msg['MID'],
+                        }
+                        send(failresponse_msg)
 
+                elif msg['type'] == 'put':
+                    key = msg['key']
+                    value = msg['value']
+
+                    entrydict = {
+                        'command': msg['type'],
+                        'key': key,
+                        'value': value,
+                        'term': currentterm,
+                        'MID': msg['MID'],
+                        'index': len(transactionlog),
+                        'src': msg['src']
+
+                    }
+                    entry = LogEntry(entrydict)
+                    transactionlog.append(entry)
+                    # append and lenth is one more than last index
+                    for rid in replica_ids:
+                        entry_list = []
+                        prevLogIndex = server_response_states[rid]['nextIndex'] - 1
+                        prevLogTerm = transactionlog[prevLogIndex].term
+
+                        for x in range(prevLogIndex + 1, len(transactionlog)):
+                            entry_list.append(transactionlog[x].toDict())
+                        if len(entry_list) > 75:
+                            entry_list = entry_list[:10]
+
+                        appendentry_msg = {
+                            'src': my_id,
+                            'dst': rid,
+                            'leader': leader,
+                            'type': 'append-entries',
+                            'entry': entry_list,
+                            'term': currentterm,
+                            'leaderCommit': LastCommittedIndex,
+                            'prevLogIndex': prevLogIndex,
+                            'prevLogTerm': prevLogTerm,
+                            'nextIndex': server_response_states[rid]['nextIndex'],
+                        }
+                        send(appendentry_msg)
+                        if rid in failing_servers:
+                            pass
+                        else:
+                            server_response_states[rid]['nextIndex'] = server_response_states[rid]['nextIndex'] + 1
+
+            elif state == 'candidate':
+                if msg['type'] == 'put':
+                    message_queue_put.append(msg)
+                if msg['type'] == 'get':
+                    message_queue_get.append(msg)
+                continue
+
+            else:  # redirect client to the leader
+                redirect_msg = {
+                    'src': my_id,
+                    'dst': msg['src'],
+                    'leader': leader,
+                    'type': 'redirect',
+                    'MID': msg['MID']
+                }
+                send(redirect_msg)
+
+        if msg['type'] == 'requestvote':
+
+            if msg['term'] > currentterm and state == 'leader':
+                state = 'follower'
+                currentterm = msg['term']
+                leader = msg['leader']
                 hearFromLeader = time.time()
+                for x in range(LastCommittedIndex + 1, len(transactionlog)):
+                    currentTransaction = transactionlog[x]
+                    redirect_msg = {
+                    'src': my_id,
+                    'dst': currentTransaction.src,
+                    'leader': leader,
+                    'type': 'redirect',
+                    'MID': currentTransaction.MID
+                    }
+                    send(redirect_msg)
 
-
-                #TODO: this is probably not neccesary since everyone only keeps track of their own votes
+            if currentterm > msg['term']:
+                continue
+            currentterm = msg['term']
+            if msg['lengthOfLog'] < len(transactionlog):
+                print str(len(transactionlog)) + ' ' + str(msg['lengthOfLog']) + ' ' + my_id
+            if len(transactionlog) > 0:
+                prevLogTerm = transactionlog[-1].term
+            else:
+                prevLogTerm = 0
+            if (not myvotes.get(msg['term'])) and (msg['lengthOfLog'] >= len(transactionlog)) and (msg['prevLogTerm'] >= prevLogTerm):
+                candidate = msg['src']
                 vote_msg = {
-                                                'leader' : leader,
-                                                'type'   : 'vote',
-                                                'vote'   : my_id,
-                                                'term'   : currentterm,
-                                                'dst'    : 'FFFF',
-                                                'src'    : my_id
-                           }
+                    'leader': leader,
+                    'type': 'vote',
+                    'vote': candidate,
+                    'term': currentterm,
+                    # the dst can probably just be the candidate
+                    # give this a try when its done
+                    # 'dst' : candidate,
+                    'dst': 'FFFF',
+                    'src': my_id
+                }
                 send(vote_msg)
+                myvotes[currentterm] = candidate
 
-                votedForMe = [my_id]
-                myvotes[currentterm] = my_id
+            else:  # I already voted this term
+                pass
 
-                readytovote = False
+        if msg['type'] == 'vote' and state == 'candidate':
+            candidate = msg['vote']
+            electionterm = msg['term']
 
+            if candidate == my_id:
+                if electionterm == currentterm:
+                    if not msg['src'] in votedForMe:
+                        votedForMe.append(msg['src'])
 
+                        if len(votedForMe) > len(all_ids) / 2:
+                            leader = my_id
+                            print '{} is the leader'.format(my_id)
+                            state = 'leader'
+                            broadcast_msg = {
+                                'leader': my_id,
+                                'type': 'new-leader',
+                                'src': my_id,
+                                'dst': 'FFFF',
+                                'term': currentterm
+                            }
 
-
-
-
-
-        #######################
-        #  RECIEVING MESSAGE  #
-        #######################
-        if sock in ready:
-                msg_raw = sock.recv(32768)
-
-                if len(msg_raw) == 0: continue
-                msg = json.loads(msg_raw)
-
-
-                if msg['src'] == leader:
-                        hearFromLeader = time.time()
-
-
-                if msg['type'] in ['get', 'put']:
-
-                        if state == 'leader': 
-
-                            if msg['type'] == 'get':
-                                response_value = False
-                                key = msg['key']
-                                #TODO: if there is no value for that key respond with empty string
-                                response_value = statemachine.get(key, False)
-
-                                if response_value:
-                                    getresponse_msg = {
-                                                            'src' : my_id,
-                                                            'dst' : msg['src'],
-                                                         'leader' : leader,
-                                                           'type' : 'ok',
-                                                           'MID'  : msg['MID'],
-                                                        'value'   : response_value,
-                                                    }
-                                    send(getresponse_msg)
-
-                                else:
-                                    failresponse_msg = {
-                                                            'src' : my_id,
-                                                            'dst' : msg['src'],
-                                                         'leader' : leader,
-                                                           'type' : 'fail',
-                                                           'MID'  : msg['MID'],
-                                                    }
-                                    send(failresponse_msg)
-
-
-                            elif msg['type'] == 'put':
-
-                                messageLog[msg['MID']] = msg['src']
-
+                            for msg in message_queue_put:
                                 key = msg['key']
                                 value = msg['value']
 
-                                entrydict = {       
-                                                        'command' : msg['type'],
-                                                            'key' : key,
-                                                          'value' : value,
-                                                           'term' : currentterm,
-                                                           'MID'  : msg['MID'],
-                                                           'index': len(transactionlog)
+                                entrydict = {
+                                    'command': msg['type'],
+                                    'key': key,
+                                    'value': value,
+                                    'term': currentterm,
+                                    'MID': msg['MID'],
+                                    'index': len(transactionlog),
+                                    'src': msg['src']
 
-                                                }
-
+                                }
                                 entry = LogEntry(entrydict)
                                 transactionlog.append(entry)
+                            message_queue_put = []
 
-                                prevLogIndex = len(transactionlog) - 2 # append and lenth is one more than last index
-                                prevLogTerm = transactionlog[prevLogIndex].term
+                            for rid in replica_ids:
+                                server_response_states[rid] = {'nextIndex': len(transactionlog),
+                                'matchIndex': 0}
 
-
-                                appendentry_msg = {
-                                                        'src' : my_id,
-                                                        'dst' : 'FFFF',
-                                                     'leader' : leader,
-                                                       'type' : 'append-entries',
-                                                      'entry' : entrydict,
-                                                      'term'  : currentterm,
-                                                # TODO: if leader has committed up to here, than you can too because quorum must have been reached
-                                               'leaderCommit' : LastCommittedIndex,
-                                               'prevLogIndex' : prevLogIndex,
-                                               'prevLogTerm'  : prevLogTerm,
-                                                  }
-                                send(appendentry_msg)
-
-                        elif state == 'candidate':
-                            print '!!!!!!!!!!!!!!!!!!!!'
-
-                        else: # redirect client to the leader
-                            redirect_msg = {
-                                                    'src' : my_id,
-                                                    'dst' : msg['src'],
-                                                    'leader' : leader,
-                                                    'type' : 'redirect',
-                                                    'MID' : msg['MID']
-                                            }
-                            send(redirect_msg)
-
-
-
-
-                if msg['type'] == 'requestvote':
-
-                        currentterm = msg['term']
-
-                        if not myvotes.get(currentterm):
-        	            	candidate = msg['src']
-                                vote_msg = {
-                                                'leader' : leader,
-                                                'type'   : 'vote',
-                                                'vote'   : candidate,
-                                                'term'   : currentterm,
-                                                # the dst can probably just be the candidate
-                                                # give this a try when its done
-                                                # 'dst' : candidate,
-                                                'dst'    : 'FFFF',
-                                                'src'    : my_id
-                                           }
-                                send(vote_msg)
-                                myvotes[currentterm] = candidate
-
-                        else: # I already voted this term
-                                pass
-
-
-
-                if msg['type'] == 'vote':
-                        candidate = msg['vote']
-                        electionterm = msg['term']
-
-                        if candidate == my_id:
-                                if electionterm > currentterm:
-                                        currentterm = electionterm
-                                        votedForMe = [msg['src']]
-
-                                elif electionterm == currentterm:
-                                        if not msg['src'] in votedForMe:
-                                                votedForMe.append(msg['src'])
-
-                                                if len(votedForMe) > len(all_ids) / 2:
-                                                        leader = my_id
-                                                        print '{} is the leader'.format(my_id)
-                                                        state = 'leader'
-                                                        broadcast_msg = {
-                                                                                'leader' : my_id,
-                                                                                'type'   : 'new-leader',
-                                                                                'src'    : my_id,
-                                                                                'dst'    : 'FFFF',
-                                                                                'term'   : currentterm
-                                                                        }
-
-                                                        send(broadcast_msg)
-
-                                else:
-                                        pass
-                                        #return false, voting for a previous term cannot go back in time
-
-                                
-
-
-                if msg['type'] == 'new-leader':
-                        # check if the term is as expected?
-                        state = 'follower'
-                        leader = msg['leader']
-
-
-
-
-                if msg['type'] == 'append-entries':
-                        newEntry = msg['entry']
-                        entry = LogEntry(newEntry)
-
-
-                        if len(transactionlog) > 0:
-                            lastEntry = transactionlog[-1]
-                            expectedIndex = lastEntry.index + 1
-                            if entry.index == expectedIndex:
-                                # print 'I got what I expected'
-                                pass
-                            else:
-                                # TODO: respond to client 
-                                # print 'ruh roh {}'.format(entry.index)
-                                request_entry_msg = {
-                                        'leader'        : leader,
-                                        'src'           : my_id,
-                                        'dst'           : leader,
-                                        'type'          : 'request-fill',
-                                        'expectedIndex' : expectedIndex,
-                                }
-                                send(request_entry_msg)
-                                continue
-                                # ignore it if its not what I expect
-
-
-                        transactionlog.append(entry)
-                        entry.commit()
-                        LastCommittedIndex = entry.index
-
-                        appendentry_response_msg = {
-                                'leader' : leader,
-                                'src' : my_id,
-                                'dst' : leader,
-                                'type' : 'append-entry-response',
-                                'LastCommittedIndex' : LastCommittedIndex,
-                                'logIndex' : logIndex,
-                        }
-                        send(appendentry_response_msg)
-
-
-
-                if msg['type'] == 'append-entry-response':
-                    replicaCommitIndeces[msg['src']] = msg['LastCommittedIndex']
-
-                    print replicaCommitIndeces
-
-                    for index in range(LastCommittedIndex , len(transactionlog) + 1): # transactionLog[index] are all uncommitted
-                        numReplicasAlreadyCommittedThis = 0
-                        for replica, cIndex in replicaCommitIndeces.iteritems():
-                            if cIndex >= index:
-                                numReplicasAlreadyCommittedThis += 1
-
-                        if numReplicasAlreadyCommittedThis + 1 > len(all_ids) / 2: # the + 1 is to include myself (leader)
-                            if not transactionlog[index].committed:
-
-                                transactionlog[index].commit()
-                                entryMID = transactionlog[index].MID
-
-                                # TODO: what would make this incorrect?
-                                response_msg = {
-                                                    'src' :  my_id,
-                                                    'dst' :  messageLog.get(entryMID),
-                                                 'leader' : leader,
-                                                   'type' : 'ok',
-                                                    'MID' : entryMID
-                                }
-                                send(response_msg)
-
-
-                if msg['type'] == 'request-fill':
-                    expectedIndex = msg['expectedIndex']
-                    entries = transactionlog[expectedIndex:]
-                    # TODO: fill in in a few messages
-                    entriesDict = [e.toDict() for e in entries]
-                    while len(entriesDict) >= FILL_CHUNK_SIZE: #TODO: is it > or >=
-                        firstEntriesDictSecion = entriesDict[:FILL_CHUNK_SIZE]
-                        entriesDict = entriesDict[FILL_CHUNK_SIZE:]
-                        fill_msg = {
-                                    'src' : my_id,
-                                    'dst' : msg['src'],
-                                 'leader' : leader,
-                                 'entries': firstEntriesDictSecion,
-                                   'type' : 'fill-in',
-                        }
-                        send(fill_msg)
-
-
-                    fill_msg = {
-                                    'src' : my_id,
-                                    'dst' : msg['src'],
-                                 'leader' : leader,
-                                 'entries': entriesDict,
-                                   'type' : 'fill-in',
-                    }
-                    send(fill_msg)
-
-
-                if msg['type'] == 'fill-in':
-                    # TODO: make sure that it starts at the expected index, if not request fill again
-                    if len(transactionlog) > 0:
-                        entriesDict = msg['entries']
-                        entries = [LogEntry(e) for e in entriesDict]
-                        lastEntry = transactionlog[-1]
-                        expectedIndex = lastEntry.index + 1
-                        if len(entries) == 0: #not sure why this would happen
-                            # TODO: why would this happen? investigate later
+                            send(broadcast_msg)
+                            #TODO: NO-OP
+                            if len(transactionlog) > 0:
+                                heartbeat()
                             continue
 
-                        if entries[0].index == expectedIndex:
-                            transactionlog = transactionlog + entries
-                        else:
-                            request_entry_msg = {
-                                    'leader'        : leader,
-                                    'src'           : my_id,
-                                    'dst'           : leader,
-                                    'type'          : 'request-fill',
-                                    'expectedIndex' : expectedIndex,
+
+                else:
+                    pass
+                    # return false, voting for a previous term cannot go back
+                    # in time
+                    #TODO: add messsage queueing
+        if msg['type'] == 'new-leader':
+            # check if the term is as expected?
+            state = 'follower'
+            currentterm = msg['term']
+            leader = msg['leader']
+            hearFromLeader = time.time()
+            for msg in message_queue_put + message_queue_get:
+                redirect_msg = {
+                        'src': my_id,
+                        'dst': msg['src'],
+                        'leader': leader,
+                        'type': 'redirect',
+                        'MID': msg['MID']
+                        }
+                send(redirect_msg)
+            message_queue_put = []
+            message_queue_get = []
+            continue
+        if msg['type'] == 'append-entries':
+            allowCommit = False
+            # check if the the index of the incoming entry is one more than
+            # the current entry we are on
+            if msg['term'] >= currentterm:
+                state = 'follower'
+                currentterm = msg['term']
+                leader = msg['leader']
+                hearFromLeader = time.time()
+
+            if len(transactionlog) + 1 < msg['nextIndex']:
+                response_msg = {
+                    'src': my_id,
+                    'dst': msg['src'],
+                    'leader': leader,
+                    'term': currentterm,
+                    'success': 'False',
+                    'type': 'append-entry-response'
+                }
+                send(response_msg)
+                continue
+            if len(transactionlog) > 0:
+                lastEntry = transactionlog[-1]
+                expectedIndex = lastEntry.index + 1
+                # check for syncing issues wih partioning and leaders
+                if msg['term'] < currentterm:
+                    response_msg = {
+                        'src': my_id,
+                        'dst': msg['src'],
+                        'leader': leader,
+                        'term': currentterm,
+                        'success': 'False',
+                        'type': 'append-entry-response'
+                    }
+                    send(msg)
+                    continue
+                for prevAppend in reversed(transactionlog):
+                    if (prevAppend.term == msg['prevLogTerm'] and prevAppend.index == msg['prevLogIndex']):
+                        allowCommit = True
+                if not allowCommit:
+                    response_msg = {
+                        'src': my_id,
+                        'dst': msg['src'],
+                        'term': currentterm,
+                        'success': 'False',
+                        'leader': leader,
+                        'x': len(transactionlog),   
+                        'type': 'append-entry-response'
+                    }
+                    send(response_msg)
+                    continue
+                if len(transactionlog) > msg['nextIndex']:
+                    new_length = len(transactionlog) - msg['nextIndex']
+                    transactionlog = transactionlog[:-new_length]
+
+            for newEntry in msg['entry']:
+                if newEntry['index'] < len(transactionlog):
+                    if newEntry['term'] == transactionlog[newEntry['index']].term:
+                        pass
+                else:
+                    entry = LogEntry(newEntry)
+                    transactionlog.append(entry)
+            if len(transactionlog) > 0 and msg['leaderCommit'] > LastCommittedIndex: 
+                #Are all these operations necessary TODO
+                up_to_here = min(len(transactionlog) - 1, msg['leaderCommit'])
+                for x in range(LastCommittedIndex + 1, up_to_here + 1):
+                    transactionlog[x].commit()
+                LastCommittedIndex = msg['leaderCommit']
+            #commit up to what master says is committed
+
+            appendentry_response_msg = {
+                'leader': leader,
+                'term': currentterm,
+                'src': my_id,
+                'dst': leader,
+                'type': 'append-entry-response',
+                'matchIndex': len(transactionlog) - 1,
+                'success': 'True',
+            }
+            send(appendentry_response_msg)
+
+
+        if msg['type'] == 'append-entry-response':
+            # replicaCommitIndeces[msg['src']] = msg['LastCommittedIndex']
+            if msg['term'] > currentterm and state == 'leader':
+                state = 'follower'
+                currentterm = msg['term']
+                leader = msg['leader']
+                hearFromLeader = time.time()
+                for x in range(LastCommittedIndex + 1, len(transactionlog)):
+                    currentTransaction = transactionlog[x]
+                    redirect_msg = {
+                    'src': my_id,
+                    'dst': currentTransaction.src,
+                    'leader': leader,
+                    'type': 'redirect',
+                    'MID': currentTransaction.MID
+                    }
+                    print redirect_msg
+                    send(redirect_msg)
+                continue
+                print str(LastCommittedIndex) + ' ' + str(len(transactionlog)) + ' !!!?@@@?@?@'
+            if msg['success'] == 'True' and state == 'leader':
+                if msg['src'] in failing_servers:
+                    failing_servers.remove(msg['src'])
+                    server_response_states[msg['src']]['nextIndex']  = msg['matchIndex'] + 1
+                server_response_states[msg['src']]['matchIndex'] = msg['matchIndex']
+                server_response_states[msg['src']]['nextIndex'] = msg['matchIndex']  + 1
+                
+                lowest_match_index = -1
+                for server,value in server_response_states.iteritems():
+                    currentValue = value['matchIndex']
+                    total_at_lowest = 0
+                    if currentValue > lowest_match_index:
+                        for server, value in server_response_states.iteritems():
+                            if value['matchIndex'] >= currentValue:
+                                total_at_lowest += 1
+                    if total_at_lowest + 1 > len(all_ids)/2:
+                        lowest_match_index = currentValue
+
+                if lowest_match_index > LastCommittedIndex:
+                    for x in range(LastCommittedIndex + 1, lowest_match_index + 1):
+                        currentTransaction = transactionlog[x]
+                        if not currentTransaction.committed:
+                            currentTransaction.commit()
+                            response_msg = {
+                            'src':  my_id,
+                            'dst':  currentTransaction.src,
+                            'leader': leader,
+                            'type': 'ok',
+                            'MID': currentTransaction.MID,
+                            'hublah': x
                             }
-                            send(request_entry_msg)
+                            print response_msg
+                            send(response_msg)
+
+                    LastCommittedIndex = lowest_match_index
+                    print LastCommittedIndex
+            elif msg['success'] == 'False':
+                if not (msg['src']) in failing_servers:
+                    failing_servers.append(msg['src'])
+                server_response_states[msg['src']]['nextIndex'] = server_response_states[msg['src']]['nextIndex'] - 1
 
 
+# 1  Add basic support for responding to client get() and put() requests. At this point, you can respond to all requests with a "type": "fail" message.
+# 2  Implement the Raft election protocol (section 5.2 of the Raft paper); add the ability to respond to get() and put() requests with "type": "redirect" messages.
+# 3  Add a timeout to detect leader failures (i.e. if you don't hear from the leader in X milliseconds...) and make sure that the new election proceeds correctly.
+# 4  Implement a basic, empty version of the AppendEntries RPC call that doesn't replicate any data, but acts as a keepalive message from the leader to other replicas to prevent unnecessary elections.
+# 5  Implement the transaction log and the "state machine" (i.e. a
+# dictionary containing the key/value pairs from clients, Section 5.3).
+# Don't bother replicating the transactions, just ensure that the leader
+# is able to correctly answer get() and put() requests.
 
+# 6  Improve your AppendEntries RPC call to actually send data to
+# replicas. Ensure that updates are only committing when a quorum is in
+# agreement.
 
-        # what to do if the leader receives a get request for a value that hasnt been committed yet but is in the log
-
-
-
-
-
-
-
-
-        # clock = time.time()
-        # if clock - last > 4:
-        #         # print "{} is in state {}, thinks {} is leader of term {}".format(my_id, state, leader, currentterm)
-        #         if my_id == leader:
-        #             print ["+" if c.committed else c.index for c in transactionlog]
-        #         last = clock
-
-
-
-
-
-
-
-#1  Add basic support for responding to client get() and put() requests. At this point, you can respond to all requests with a "type": "fail" message.
-#2  Implement the Raft election protocol (section 5.2 of the Raft paper); add the ability to respond to get() and put() requests with "type": "redirect" messages.
-#3  Add a timeout to detect leader failures (i.e. if you don't hear from the leader in X milliseconds...) and make sure that the new election proceeds correctly.
-#4  Implement a basic, empty version of the AppendEntries RPC call that doesn't replicate any data, but acts as a keepalive message from the leader to other replicas to prevent unnecessary elections.
-#5  Implement the transaction log and the "state machine" (i.e. a dictionary containing the key/value pairs from clients, Section 5.3). Don't bother replicating the transactions, just ensure that the leader is able to correctly answer get() and put() requests.
-
-#6  Improve your AppendEntries RPC call to actually send data to replicas. Ensure that updates are only committing when a quorum is in agreement.
-
-#7  Add support for retrying failed commits and test it by experimenting with lossy network simulations.
-#8  If you haven't already, modify the leader election to support the additional restrictions in Section 5.4.1; test your implementation on lossy networks with failed leaders.
-#9  Implement the subtle commit restriction given in Section 5.4.2.
-#10 Test, test, test, and test some more ;)
-# Step 6 will probably require the most time in terms of writing code and debugging, since it is the crux of the algorithm. Implementing steps 7-9 are necessary to ensure correctness of the protocol, but shouldn't be too difficult.
+# 7  Add support for retrying failed commits and test it by experimenting with lossy network simulations.
+# 8  If you haven't already, modify the leader election to support the additional restrictions in Section 5.4.1; test your implementation on lossy networks with failed leaders.
+# 9  Implement the subtle commit restriction given in Section 5.4.2.
+# 10 Test, test, test, and test some more ;)
+# Step 6 will probably require the most time in terms of writing code and
+# debugging, since it is the crux of the algorithm. Implementing steps 7-9
+# are necessary to ensure correctness of the protocol, but shouldn't be
+# too difficult.

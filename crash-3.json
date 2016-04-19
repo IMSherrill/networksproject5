@@ -3,5 +3,5 @@
     "replicas": 5,
     "requests": 500,
     "mix" : 0.2,
-    "events" : [{"type": "kill_leader", "time": 15}]
+    "events" : [{"type": "kill_leader", "time": 5}]
 }
