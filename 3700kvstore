@@ -13,6 +13,7 @@ from pprint import pprint
 # # this keeps it from printing out, useful for when running ./test
 # f = open(os.devnull, 'w')
 # sys.stdout = f
+#TODO: no-op
 
 
 class LogEntry:
@@ -74,7 +75,7 @@ state = 'candidate'
 currentterm = 0
 votedForMe = []
 myvotes = {}
-
+need_to_send_was_leader = False
 # Connect to the network. All messages to/from other replicas and clients will
 # occur over this socket
 sock = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
@@ -83,7 +84,7 @@ sock.connect(my_id)
 last = 0
 
 leader = 'FFFF'
-
+test = 0
 hearFromLeader = time.time()
 readytovote = False
 electionclock = time.time()
@@ -139,7 +140,10 @@ def heartbeat():
     for rid in replica_ids:
         entry_list = []
         prevLogIndex = server_response_states[rid]['nextIndex'] - 1
-        prevLogTerm = transactionlog[prevLogIndex].term
+        if prevLogIndex > 0:
+            prevLogTerm = transactionlog[prevLogIndex].term
+        else:
+            prevLogTerm = 0
 
         for x in range(prevLogIndex + 1, len(transactionlog)):
             entry_list.append(transactionlog[x].toDict())
@@ -157,6 +161,7 @@ def heartbeat():
             'prevLogTerm': prevLogTerm,
             'nextIndex': server_response_states[rid]['nextIndex']
         }
+
         send(appendentry_msg)
 while True:
     lastlogIndex = len(transactionlog) - 1
@@ -257,6 +262,9 @@ while True:
                         send(failresponse_msg)
 
                 elif msg['type'] == 'put':
+                    if msg['MID'] in MID_log:
+                        print 'found'
+                        continue
                     key = msg['key']
                     value = msg['value']
 
@@ -275,13 +283,14 @@ while True:
                     # append and lenth is one more than last index
                     for rid in replica_ids:
                         entry_list = []
-                        prevLogIndex = server_response_states[rid]['nextIndex'] - 1
+                        prevLogIndex = max(server_response_states[rid]['nextIndex'] - 1, 0)
+                        # print str(prevLogIndex) + ' ' + str(rid) + str(my_id)
                         prevLogTerm = transactionlog[prevLogIndex].term
 
                         for x in range(prevLogIndex + 1, len(transactionlog)):
                             entry_list.append(transactionlog[x].toDict())
-                        if len(entry_list) > 75:
-                            entry_list = entry_list[:10]
+                        if len(entry_list) > 50:
+                            entry_list = entry_list[:50]
 
                         appendentry_msg = {
                             'src': my_id,
@@ -297,6 +306,7 @@ while True:
                         }
                         send(appendentry_msg)
                         if rid in failing_servers:
+                            print 'noooo'
                             pass
                         else:
                             server_response_states[rid]['nextIndex'] = server_response_states[rid]['nextIndex'] + 1
@@ -317,30 +327,14 @@ while True:
                     'MID': msg['MID']
                 }
                 send(redirect_msg)
+                continue
 
         if msg['type'] == 'requestvote':
-
-            if msg['term'] > currentterm and state == 'leader':
-                state = 'follower'
-                currentterm = msg['term']
-                leader = msg['leader']
-                hearFromLeader = time.time()
-                for x in range(LastCommittedIndex + 1, len(transactionlog)):
-                    currentTransaction = transactionlog[x]
-                    redirect_msg = {
-                    'src': my_id,
-                    'dst': currentTransaction.src,
-                    'leader': leader,
-                    'type': 'redirect',
-                    'MID': currentTransaction.MID
-                    }
-                    send(redirect_msg)
 
             if currentterm > msg['term']:
                 continue
             currentterm = msg['term']
-            if msg['lengthOfLog'] < len(transactionlog):
-                print str(len(transactionlog)) + ' ' + str(msg['lengthOfLog']) + ' ' + my_id
+            leader = msg['leader']
             if len(transactionlog) > 0:
                 prevLogTerm = transactionlog[-1].term
             else:
@@ -352,10 +346,7 @@ while True:
                     'type': 'vote',
                     'vote': candidate,
                     'term': currentterm,
-                    # the dst can probably just be the candidate
-                    # give this a try when its done
-                    # 'dst' : candidate,
-                    'dst': 'FFFF',
+                    'dst': candidate,
                     'src': my_id
                 }
                 send(vote_msg)
@@ -377,13 +368,6 @@ while True:
                             leader = my_id
                             print '{} is the leader'.format(my_id)
                             state = 'leader'
-                            broadcast_msg = {
-                                'leader': my_id,
-                                'type': 'new-leader',
-                                'src': my_id,
-                                'dst': 'FFFF',
-                                'term': currentterm
-                            }
 
                             for msg in message_queue_put:
                                 key = msg['key']
@@ -403,15 +387,25 @@ while True:
                                 transactionlog.append(entry)
                             message_queue_put = []
 
-                            for rid in replica_ids:
-                                server_response_states[rid] = {'nextIndex': len(transactionlog),
-                                'matchIndex': 0}
+                            #NO-OP
+                            entrydict = {
+                                    'command': 'no-op',
+                                    'key': '-1',
+                                    'value': '-1',
+                                    'term': currentterm,
+                                    'MID': 'FLabbergasted',
+                                    'index': len(transactionlog),
+                                    'src': my_id
 
-                            send(broadcast_msg)
+                                }
+                            entry = LogEntry(entrydict)
+                            transactionlog.append(entry)
+
+                            for rid in replica_ids:
+                                server_response_states[rid] = {'nextIndex': len(transactionlog) - 1,
+                                'matchIndex': 0}
                             #TODO: NO-OP
-                            if len(transactionlog) > 0:
-                                heartbeat()
-                            continue
+                            heartbeat()
 
 
                 else:
@@ -419,42 +413,80 @@ while True:
                     # return false, voting for a previous term cannot go back
                     # in time
                     #TODO: add messsage queueing
-        if msg['type'] == 'new-leader':
-            # check if the term is as expected?
-            state = 'follower'
-            currentterm = msg['term']
-            leader = msg['leader']
-            hearFromLeader = time.time()
-            for msg in message_queue_put + message_queue_get:
-                redirect_msg = {
-                        'src': my_id,
-                        'dst': msg['src'],
-                        'leader': leader,
-                        'type': 'redirect',
-                        'MID': msg['MID']
-                        }
-                send(redirect_msg)
-            message_queue_put = []
-            message_queue_get = []
             continue
         if msg['type'] == 'append-entries':
             allowCommit = False
             # check if the the index of the incoming entry is one more than
             # the current entry we are on
-            if msg['term'] >= currentterm:
+
+            if (msg['term'] > currentterm and state == 'leader') or need_to_send_was_leader:
                 state = 'follower'
                 currentterm = msg['term']
                 leader = msg['leader']
                 hearFromLeader = time.time()
+                for x in range(LastCommittedIndex + 1, len(transactionlog)):
+                    currentTransaction = transactionlog[x]
+                    redirect_msg = {
+                    'src': currentTransaction.src,
+                    'dst': leader,
+                    'leader': leader,
+                    'type': 'put',
+                    'key': currentTransaction.key,
+                    'value': currentTransaction.value,
+                    'MID': currentTransaction.MID,
+                    'hublah': x
+                    }
+                    send(redirect_msg)
+                    need_to_send_was_leader = False
 
-            if len(transactionlog) + 1 < msg['nextIndex']:
+            if msg['term'] >= currentterm and state == 'candidate':
+                state = 'follower'
+                currentterm = msg['term']
+                leader = msg['leader']
+                hearFromLeader = time.time()
+                for msg_2 in message_queue_put + message_queue_get:
+                    redirect_msg = {
+                            'src': my_id,
+                            'dst': msg_2['src'],
+                            'leader': leader,
+                            'type': 'redirect',
+                            'matchIndex': len(transactionlog) - 1,
+                            'MID': msg_2['MID']
+                            }
+                    send(redirect_msg)
+                message_queue_put = []
+                message_queue_get = []
+
+            if msg['term'] >= currentterm and state == 'follower':
+                currentterm = msg['term']
+                leader = msg['leader']
+                hearFromLeader = time.time()
+                for msg_2 in message_queue_put + message_queue_get:
+                    redirect_msg = {
+                            'src': my_id,
+                            'dst': msg_2['src'],
+                            'leader': leader,
+                            'type': 'redirect',
+                            'matchIndex': len(transactionlog) - 1,
+                            'MID': msg_2['MID']
+                            }
+                    send(redirect_msg)
+                message_queue_put = []
+                message_queue_get = []
+
+
+            if len(transactionlog) < msg['nextIndex']:
+                print str(len(transactionlog)) + ' ' +  str(msg['nextIndex'])
+                
                 response_msg = {
                     'src': my_id,
                     'dst': msg['src'],
                     'leader': leader,
                     'term': currentterm,
                     'success': 'False',
-                    'type': 'append-entry-response'
+                    'matchIndex': len(transactionlog) - 1,
+                    'type': 'append-entry-response',
+                    'boolean_test': 'False'
                 }
                 send(response_msg)
                 continue
@@ -463,30 +495,52 @@ while True:
                 expectedIndex = lastEntry.index + 1
                 # check for syncing issues wih partioning and leaders
                 if msg['term'] < currentterm:
+                    hearFromLeader = time.time()
+                    print 'failing'
                     response_msg = {
                         'src': my_id,
                         'dst': msg['src'],
                         'leader': leader,
                         'term': currentterm,
                         'success': 'False',
-                        'type': 'append-entry-response'
+                        'matchIndex': len(transactionlog) - 1,
+                        'type': 'append-entry-response',
+                        'boolean_test': 'False'
                     }
-                    send(msg)
+                    send(response_msg)
                     continue
+                reject_transaction = 0
+                boolean_test = False
                 for prevAppend in reversed(transactionlog):
                     if (prevAppend.term == msg['prevLogTerm'] and prevAppend.index == msg['prevLogIndex']):
                         allowCommit = True
+                    if (prevAppend.index == msg['prevLogIndex']):
+                        reject_transaction = prevAppend
+                        boolean_test = True
+                if msg['prevLogIndex'] == 0:
+                    allowCommit = True
+
                 if not allowCommit:
+                    if reject_transaction != 0:
+                        bad_index_list = [transaction.index for transaction in transactionlog if transaction.term == reject_transaction.term]
+                        bad_index = min(bad_index_list)
+                        reject_transaction = 0
+                    else:
+                        bad_index = len(transactionlog) - 1
+                        boolean_test = False
+                    print str(bad_index) + ' ' + str(len(transactionlog)) + '!!!!!'
                     response_msg = {
                         'src': my_id,
                         'dst': msg['src'],
                         'term': currentterm,
                         'success': 'False',
                         'leader': leader,
-                        'x': len(transactionlog),   
-                        'type': 'append-entry-response'
+                        'matchIndex': bad_index,
+                        'type': 'append-entry-response',
+                        'boolean_test': boolean_test
                     }
                     send(response_msg)
+                    boolean_test = False
                     continue
                 if len(transactionlog) > msg['nextIndex']:
                     new_length = len(transactionlog) - msg['nextIndex']
@@ -496,6 +550,8 @@ while True:
                 if newEntry['index'] < len(transactionlog):
                     if newEntry['term'] == transactionlog[newEntry['index']].term:
                         pass
+                    else:
+                        transactionlog = transactionlog[:newEntry['index']]
                 else:
                     entry = LogEntry(newEntry)
                     transactionlog.append(entry)
@@ -503,8 +559,9 @@ while True:
                 #Are all these operations necessary TODO
                 up_to_here = min(len(transactionlog) - 1, msg['leaderCommit'])
                 for x in range(LastCommittedIndex + 1, up_to_here + 1):
+                    MID_log.append(transactionlog[x].MID)
                     transactionlog[x].commit()
-                LastCommittedIndex = msg['leaderCommit']
+                LastCommittedIndex = min(msg['leaderCommit'], len(transactionlog) - 1)
             #commit up to what master says is committed
 
             appendentry_response_msg = {
@@ -526,25 +583,44 @@ while True:
                 currentterm = msg['term']
                 leader = msg['leader']
                 hearFromLeader = time.time()
-                for x in range(LastCommittedIndex + 1, len(transactionlog)):
-                    currentTransaction = transactionlog[x]
-                    redirect_msg = {
-                    'src': my_id,
-                    'dst': currentTransaction.src,
-                    'leader': leader,
-                    'type': 'redirect',
-                    'MID': currentTransaction.MID
-                    }
-                    print redirect_msg
-                    send(redirect_msg)
+                need_to_send_was_leader = True
+                # for x in range(LastCommittedIndex + 1, len(transactionlog)):
+                #     currentTransaction = transactionlog[x]
+                #     redirect_msg = {
+                #     'src': currentTransaction.src,
+                #     'dst': leader,
+                #     'leader': leader,
+                #     'type': 'put',
+                #     'key': currentTransaction.key,
+                #     'value': currentTransaction.value,
+                #     'MID': currentTransaction.MID,
+                #     'hublah': x
+                #     }
+                #     send(redirect_msg)
                 continue
-                print str(LastCommittedIndex) + ' ' + str(len(transactionlog)) + ' !!!?@@@?@?@'
-            if msg['success'] == 'True' and state == 'leader':
+                # print str(LastCommittedIndex) + '!!!!'
+                # for x in range(LastCommittedIndex + 1, len(transactionlog)):
+                #     currentTransaction = transactionlog[x]
+                #     redirect_msg = {
+                #     'src': currentTransaction.src,
+                #     'dst': leader,
+                #     'leader': leader,
+                #     'type': 'put',
+                #     'key': currentTransaction.key,
+                #     'value': currentTransaction.value,
+                #     'MID': currentTransaction.MID,
+                #     'hublah': x
+                #     }
+                #     send(redirect_msg
+            if msg['success'] == 'True' and state == 'leader' and msg['term'] == currentterm:
                 if msg['src'] in failing_servers:
                     failing_servers.remove(msg['src'])
                     server_response_states[msg['src']]['nextIndex']  = msg['matchIndex'] + 1
-                server_response_states[msg['src']]['matchIndex'] = msg['matchIndex']
-                server_response_states[msg['src']]['nextIndex'] = msg['matchIndex']  + 1
+                if not msg['src'] in server_response_states:
+                    continue
+
+                server_response_states[str(msg['src'])]['matchIndex'] = msg['matchIndex']
+                server_response_states[str(msg['src'])]['nextIndex'] = msg['matchIndex']  + 1
                 
                 lowest_match_index = -1
                 for server,value in server_response_states.iteritems():
@@ -560,7 +636,8 @@ while True:
                 if lowest_match_index > LastCommittedIndex:
                     for x in range(LastCommittedIndex + 1, lowest_match_index + 1):
                         currentTransaction = transactionlog[x]
-                        if not currentTransaction.committed:
+                        if not currentTransaction.committed and (not currentTransaction.MID in MID_log):
+                            MID_log.append(currentTransaction.MID)
                             currentTransaction.commit()
                             response_msg = {
                             'src':  my_id,
@@ -568,18 +645,22 @@ while True:
                             'leader': leader,
                             'type': 'ok',
                             'MID': currentTransaction.MID,
-                            'hublah': x
                             }
-                            print response_msg
-                            send(response_msg)
-
+                            if currentTransaction.MID != 'FLabbergasted':
+                                send(response_msg)
                     LastCommittedIndex = lowest_match_index
                     print LastCommittedIndex
-            elif msg['success'] == 'False':
-                if not (msg['src']) in failing_servers:
+            elif msg['success'] == 'False' and state == 'leader':
+                if not (msg['src'] in failing_servers):
                     failing_servers.append(msg['src'])
-                server_response_states[msg['src']]['nextIndex'] = server_response_states[msg['src']]['nextIndex'] - 1
+                    if msg['boolean_test'] == 'True':
+                        bad_term = [transaction.term for transaction in transactionlog if transaction.index == msg['matchIndex']]
+                        matchIndex = min(transaction.index for transaction in transactionlog if transaction.term == bad_term)
+                        server_response_states[msg['src']]['nextIndex'] = max(matchIndex, 0)
+                    else:
+                        server_response_states[msg['src']]['nextIndex'] = max(msg['matchIndex'], 0)
 
+                server_response_states[msg['src']]['nextIndex'] = max(server_response_states[msg['src']]['nextIndex'] - 1, 0)
 
 # 1  Add basic support for responding to client get() and put() requests. At this point, you can respond to all requests with a "type": "fail" message.
 # 2  Implement the Raft election protocol (section 5.2 of the Raft paper); add the ability to respond to get() and put() requests with "type": "redirect" messages.
