@@ -334,7 +334,6 @@ while True:
             if currentterm > msg['term']:
                 continue
             currentterm = msg['term']
-            leader = msg['leader']
             if len(transactionlog) > 0:
                 prevLogTerm = transactionlog[-1].term
             else:
