@@ -54,6 +54,7 @@ class LogEntry:
 
 def send(msg):
     sock.sendall(json.dumps(msg))
+        
 
 
 def getIndexOfEntryWithThisMID(mid):
@@ -66,7 +67,6 @@ def getIndexOfEntryWithThisMID(mid):
 def MakeSureEverythingIsInOrder():
     pass
 
-
 my_id = sys.argv[1]
 replica_ids = sys.argv[2:]
 all_ids = [my_id] + replica_ids
@@ -78,8 +78,15 @@ myvotes = {}
 need_to_send_was_leader = False
 # Connect to the network. All messages to/from other replicas and clients will
 # occur over this socket
-sock = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
-sock.connect(my_id)
+try:
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+    sock.connect(my_id)
+    time.sleep(0.5)
+except:
+    print 'hiiiiii'
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+    sock.connect(my_id)
+
 
 last = 0
 
@@ -167,29 +174,22 @@ while True:
     ready = select.select([sock], [], [], 0)[0]
 
     now = time.time()
-    if state == 'candidate' and now - electionclock > timeoutlength:
-        timeoutlength
-        readytovote = True
-
-    now = time.time()
-    if now - hearFromLeader > 2 and not state == 'leader':
+    if state != 'leader' and now - electionclock > timeoutlength:
+        timeoutlength = random.uniform(0.350, 0.500)
         readytovote = True
 
     if state == 'leader':
         now = time.time()
-        if now - keepaliveclock > .1:
-            # TODO: keepalive might not be neccesary when i have implemented
-            # append entries RPC, if its empty it will function the same?
-            if len(transactionlog) > 0:
-                heartbeat()
-
+        if now - keepaliveclock > 0.150:
             keepaliveclock = time.time()
+            counter += 1
+            heartbeat()
+
 
 
     if readytovote:
         currentterm += 1
         print "{} requesting vote updating to term {}".format(my_id, currentterm)
-        timeoutlength = random.uniform(.150, .400)
         if len(transactionlog) > 0:
             prevLogTerm = transactionlog[-1].term
         else:
@@ -205,13 +205,9 @@ while True:
             'lengthOfLog': len(transactionlog)
         }
         send(election_msg)
-
-        hearFromLeader = time.time()
         electionclock = time.time()
-        timeoutlength = random.uniform(0.150, 0.300)
         votedForMe = [my_id]
         myvotes[currentterm] = my_id
-
         readytovote = False
 
     #######################
@@ -335,9 +331,6 @@ while True:
                 continue
             if currentterm < msg['term']:
                 currentterm = msg['term']
-                leader = msg['leader']
-                if state == 'candidate':
-                    hearFromLeader = time.time()
                 state = 'follower'
             if len(transactionlog) > 0:
                 prevLogTerm = transactionlog[-1].term
@@ -346,7 +339,7 @@ while True:
             if (not myvotes.get(msg['term'])) and (msg['lengthOfLog'] >= len(transactionlog)) and (msg['prevLogTerm'] >= prevLogTerm):
                 candidate = msg['src']
                 vote_msg = {
-                    'leader': leader,
+                    'leader': 'FFFF',
                     'type': 'vote',
                     'vote': candidate,
                     'term': currentterm,
@@ -354,6 +347,7 @@ while True:
                     'src': my_id
                 }
                 send(vote_msg)
+                electionclock = time.time()
                 myvotes[currentterm] = candidate
 
             else:  # I already voted this term
@@ -432,7 +426,7 @@ while True:
                 state = 'follower'
                 currentterm = msg['term']
                 leader = msg['leader']
-                hearFromLeader = time.time()
+                electionclock = time.time()
                 for x in range(LastCommittedIndex + 1, len(transactionlog)):
                     currentTransaction = transactionlog[x]
                     redirect_msg = {
@@ -452,7 +446,7 @@ while True:
                 state = 'follower'
                 currentterm = msg['term']
                 leader = msg['leader']
-                hearFromLeader = time.time()
+                electionclock = time.time()
                 for msg_2 in message_queue_put + message_queue_get:
                     redirect_msg = {
                             'src': my_id,
@@ -469,7 +463,7 @@ while True:
             if msg['term'] >= currentterm and state == 'follower':
                 currentterm = msg['term']
                 leader = msg['leader']
-                hearFromLeader = time.time()
+                electionclock = time.time()
                 for msg_2 in message_queue_put + message_queue_get:
                     redirect_msg = {
                             'src': my_id,
@@ -503,7 +497,6 @@ while True:
                 expectedIndex = lastEntry.index + 1
                 # check for syncing issues wih partioning and leaders
                 if msg['term'] < currentterm:
-                    hearFromLeader = time.time()
                     response_msg = {
                         'src': my_id,
                         'dst': msg['src'],
@@ -629,7 +622,6 @@ while True:
                                 send(response_msg)
                     LastCommittedIndex = lowest_match_index
                     time_since_last_commit = time.time()
-                    print LastCommittedIndex
             elif msg['success'] == 'False' and state == 'leader':
                 if not (msg['src'] in failing_servers):
                     failing_servers.append(msg['src'])
