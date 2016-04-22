@@ -117,7 +117,7 @@ for rid in replica_ids:
     server_response_states[rid] = {'nextIndex': 0,
                                    'matchIndex': 0}
 # play with this value for optimization + latecny (bigger is better)
-FILL_CHUNK_SIZE = 50
+FILL_CHUNK_SIZE = 80
 def heartbeat():
     global message_queue_get
     if len(message_queue_get) > 0 and LastCommittedIndex > 0:
@@ -155,8 +155,8 @@ def heartbeat():
             start_point = prevLogIndex
         for x in range(start_point, len(transactionlog)):
             entry_list.append(transactionlog[x].toDict())
-        if len(entry_list) > 50:
-            entry_list = entry_list[:50]
+        if len(entry_list) > FILL_CHUNK_SIZE:
+            entry_list = entry_list[:FILL_CHUNK_SIZE]
         appendentry_msg = {
             'src': my_id,
             'dst': rid,
@@ -282,8 +282,8 @@ while True:
                         prevLogTerm = transactionlog[prevLogIndex].term
                         for x in range(prevLogIndex + 1, len(transactionlog)):
                             entry_list.append(transactionlog[x].toDict())
-                        if len(entry_list) > 50:
-                            entry_list = entry_list[:50]
+                        if len(entry_list) > FILL_CHUNK_SIZE:
+                            entry_list = entry_list[:FILL_CHUNK_SIZE]
 
                         appendentry_msg = {
                             'src': my_id,
@@ -305,6 +305,7 @@ while True:
 
             elif state == 'candidate':
                 if 'redirect_from_leader' in msg:
+
                     continue
                 redirect_msg = {
                     'src': my_id,
@@ -318,6 +319,8 @@ while True:
 
             else:  # redirect client to the leader
                 if 'redirect_from_leader' in msg:
+                    msg['dst'] = leader
+                    send(msg)
                     continue
                 redirect_msg = {
                     'src': my_id,
