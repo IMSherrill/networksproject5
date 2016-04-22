@@ -95,7 +95,7 @@ test = 0
 hearFromLeader = time.time()
 readytovote = False
 electionclock = time.time()
-timeoutlength = random.uniform(.150, .300)
+timeoutlength = random.uniform(.350, .500)
 keepaliveclock = time.time()
 
 transactionlog = []
@@ -149,8 +149,11 @@ def heartbeat():
         entry_list = []
         prevLogIndex = max(server_response_states[rid]['nextIndex'] - 1, 0)
         prevLogTerm = transactionlog[prevLogIndex].term
-
-        for x in range(prevLogIndex + 1, len(transactionlog)):
+        if prevLogIndex == 0:
+            start_point = -1
+        else:
+            start_point = prevLogIndex
+        for x in range(start_point, len(transactionlog)):
             entry_list.append(transactionlog[x].toDict())
         if len(entry_list) > 50:
             entry_list = entry_list[:50]
@@ -349,7 +352,6 @@ while True:
                 send(vote_msg)
                 electionclock = time.time()
                 myvotes[currentterm] = candidate
-
             else:  # I already voted this term
                 pass
 
@@ -443,10 +445,10 @@ while True:
                     need_to_send_was_leader = False
 
             if msg['term'] >= currentterm and state == 'candidate':
+                print msg
                 state = 'follower'
                 currentterm = msg['term']
                 leader = msg['leader']
-                electionclock = time.time()
                 for msg_2 in message_queue_put + message_queue_get:
                     redirect_msg = {
                             'src': my_id,
@@ -457,13 +459,13 @@ while True:
                             'MID': msg_2['MID']
                             }
                     send(redirect_msg)
+                electionclock = time.time()
                 message_queue_put = []
                 message_queue_get = []
 
             if msg['term'] >= currentterm and state == 'follower':
                 currentterm = msg['term']
                 leader = msg['leader']
-                electionclock = time.time()
                 for msg_2 in message_queue_put + message_queue_get:
                     redirect_msg = {
                             'src': my_id,
@@ -474,6 +476,7 @@ while True:
                             'MID': msg_2['MID']
                             }
                     send(redirect_msg)
+                electionclock = time.time()
                 message_queue_put = []
                 message_queue_get = []
 
